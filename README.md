@@ -22,11 +22,13 @@ This project uses a **native Nexus installation managed by systemd** (no Docker,
 - `docs/decisions.md`
 - `docs/client-setup.md`
 - `docs/runbook.md`
+- `requirements.txt`
+- `.gitignore`
 - `Makefile`
 
 ## Prerequisites
 
-- Ansible installed on your laptop
+- Python 3 with `venv` support on your laptop
 - SSH access to Debian 13 VM
 - VM user with sudo privileges
 - Outbound internet access from VM to:
@@ -36,6 +38,12 @@ This project uses a **native Nexus installation managed by systemd** (no Docker,
 - Hostname resolution for `nexus_hostname` (default `repo.idops.local`) from clients and from the Nexus VM itself.
 
 ## Vault Secret Setup
+
+Initialize tooling first:
+
+```bash
+make venv
+```
 
 1. Edit vault placeholder:
 
@@ -48,21 +56,25 @@ vi group_vars/all/vault.yml
 3. Encrypt the file:
 
 ```bash
-ansible-vault encrypt group_vars/all/vault.yml
+./.venv/bin/ansible-vault encrypt group_vars/all/vault.yml
 ```
 
 ## How To Run
+
+```bash
+make venv
+```
 
 ```bash
 make lint
 ```
 
 ```bash
-ansible-playbook -i inventories/dev/hosts.ini site.yml --syntax-check
+./.venv/bin/ansible-playbook -i inventories/dev/hosts.ini site.yml --syntax-check
 ```
 
 ```bash
-ansible-playbook -i inventories/dev/hosts.ini site.yml --ask-vault-pass
+./.venv/bin/ansible-playbook -i inventories/dev/hosts.ini site.yml --ask-vault-pass
 ```
 
 You can also use:

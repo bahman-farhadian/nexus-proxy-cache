@@ -32,3 +32,7 @@
 ## 8. Stable Nexus hostname
 - Decision: Use `nexus_hostname` (default `repo.idops.local`) as the canonical endpoint for Nexus URLs.
 - Why: Avoids hard-coded private IPs in client configuration and allows IP changes without updating clients.
+
+## 9. Python tooling isolation
+- Decision: Use project-local `.venv` with `requirements.txt` via `make venv`.
+- Why: Keeps Ansible and lint versions isolated from host OS packages and avoids global dependency drift.

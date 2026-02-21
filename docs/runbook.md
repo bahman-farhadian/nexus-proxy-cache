@@ -7,35 +7,40 @@
 vi inventories/dev/hosts.ini
 ```
 
-2. Ensure `nexus_hostname` is resolvable from clients and Nexus VM (DNS or `/etc/hosts`).
+2. Create local tooling virtualenv:
+```bash
+make venv
+```
 
-3. Set and encrypt vault secrets:
+3. Ensure `nexus_hostname` is resolvable from clients and Nexus VM (DNS or `/etc/hosts`).
+
+4. Set and encrypt vault secrets:
 ```bash
 vi group_vars/all/vault.yml
-ansible-vault encrypt group_vars/all/vault.yml
+./.venv/bin/ansible-vault encrypt group_vars/all/vault.yml
 ```
 
-4. Validate:
+5. Validate:
 ```bash
 make lint
-ansible-playbook -i inventories/dev/hosts.ini site.yml --syntax-check
+./.venv/bin/ansible-playbook -i inventories/dev/hosts.ini site.yml --syntax-check
 ```
 
-5. Deploy:
+6. Deploy:
 ```bash
-ansible-playbook -i inventories/dev/hosts.ini site.yml --ask-vault-pass
+./.venv/bin/ansible-playbook -i inventories/dev/hosts.ini site.yml --ask-vault-pass
 ```
 
 ## Day-2 operations
 
 ### Restart Nexus
 ```bash
-ansible nexus -i inventories/dev/hosts.ini -b -m ansible.builtin.systemd_service -a "name=nexus state=restarted"
+./.venv/bin/ansible nexus -i inventories/dev/hosts.ini -b -m ansible.builtin.systemd_service -a "name=nexus state=restarted"
 ```
 
 ### Check Nexus service
 ```bash
-ansible nexus -i inventories/dev/hosts.ini -b -m ansible.builtin.systemd_service -a "name=nexus state=started"
+./.venv/bin/ansible nexus -i inventories/dev/hosts.ini -b -m ansible.builtin.systemd_service -a "name=nexus state=started"
 ```
 
 ### View logs on target
@@ -50,7 +55,7 @@ sudo tail -n 200 /var/lib/nexus/log/nexus.log
 2. Optionally set `nexus_download_checksum`.
 3. Run deploy again:
 ```bash
-ansible-playbook -i inventories/dev/hosts.ini site.yml --ask-vault-pass
+./.venv/bin/ansible-playbook -i inventories/dev/hosts.ini site.yml --ask-vault-pass
 ```
 
 The role extracts the new version, repoints `/opt/nexus/current`, and restarts service if needed.
