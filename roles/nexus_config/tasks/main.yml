@@ -1,0 +1,247 @@
+---
+- name: Wait for Nexus TCP port to be reachable
+  ansible.builtin.wait_for:
+    host: "{{ nexus_hostname }}"
+    port: "{{ nexus_http_port | int }}"
+    timeout: "{{ nexus_wait_timeout | int }}"
+    delay: 5
+
+- name: Wait for Nexus REST API readiness
+  ansible.builtin.uri:
+    url: "{{ nexus_rest_api_base_url }}/status"
+    method: GET
+    status_code:
+      - 200
+      - 401
+  register: nexus_status
+  retries: 120
+  delay: 5
+  until: nexus_status.status in [200, 401]
+  changed_when: false
+
+- name: Check if desired admin password already works
+  ansible.builtin.uri:
+    url: "{{ nexus_rest_api_base_url }}/status"
+    method: GET
+    user: "{{ nexus_admin_username }}"
+    password: "{{ nexus_admin_password }}"
+    force_basic_auth: true
+    status_code:
+      - 200
+      - 401
+  register: nexus_desired_password_check
+  changed_when: false
+  no_log: true
+
+- name: Read bootstrap admin password file when needed
+  ansible.builtin.slurp:
+    src: "{{ nexus_data_dir }}/admin.password"
+  register: nexus_bootstrap_password_file
+  changed_when: false
+  failed_when: false
+  no_log: true
+  when: nexus_desired_password_check.status == 401
+
+- name: Set bootstrap password fact
+  ansible.builtin.set_fact:
+    nexus_bootstrap_admin_password: "{{ nexus_bootstrap_password_file.content | b64decode | trim }}"
+  no_log: true
+  when:
+    - nexus_desired_password_check.status == 401
+    - nexus_bootstrap_password_file is defined
+    - nexus_bootstrap_password_file.content is defined
+
+- name: Fail when no valid admin password source is available
+  ansible.builtin.fail:
+    msg: >-
+      Unable to authenticate with vault_nexus_admin_password and bootstrap password file was not found.
+      Set vault_nexus_admin_password to the current admin password or reset admin credentials manually.
+  when:
+    - nexus_desired_password_check.status == 401
+    - (nexus_bootstrap_admin_password | default('')) | length == 0
+
+- name: Set Nexus admin password from vault
+  ansible.builtin.uri:
+    url: "{{ nexus_rest_api_base_url }}/security/users/admin/change-password"
+    method: PUT
+    user: "{{ nexus_admin_username }}"
+    password: "{{ nexus_bootstrap_admin_password }}"
+    force_basic_auth: true
+    headers:
+      Content-Type: text/plain
+    body: "{{ nexus_admin_password }}"
+    body_format: raw
+    status_code: 204
+  no_log: true
+  when: nexus_desired_password_check.status == 401
+
+- name: Verify admin authentication with vault password
+  ansible.builtin.uri:
+    url: "{{ nexus_rest_api_base_url }}/status"
+    method: GET
+    user: "{{ nexus_admin_username }}"
+    password: "{{ nexus_admin_password }}"
+    force_basic_auth: true
+    status_code: 200
+  register: nexus_auth_verify
+  retries: 20
+  delay: 3
+  until: nexus_auth_verify.status == 200
+  changed_when: false
+  no_log: true
+
+- name: Query existing repositories
+  ansible.builtin.uri:
+    url: "{{ nexus_rest_api_base_url }}/repositories"
+    method: GET
+    user: "{{ nexus_admin_username }}"
+    password: "{{ nexus_admin_password }}"
+    force_basic_auth: true
+    return_content: true
+    status_code: 200
+  register: nexus_existing_repositories
+  changed_when: false
+  no_log: true
+
+- name: Build list of existing repository names
+  ansible.builtin.set_fact:
+    nexus_existing_repo_names: "{{ nexus_existing_repositories.json | map(attribute='name') | list }}"
+  changed_when: false
+
+- name: Create APT proxy repositories
+  ansible.builtin.uri:
+    url: "{{ nexus_rest_api_base_url }}/repositories/apt/proxy"
+    method: POST
+    user: "{{ nexus_admin_username }}"
+    password: "{{ nexus_admin_password }}"
+    force_basic_auth: true
+    body_format: json
+    status_code:
+      - 201
+      - 204
+    body:
+      name: "{{ item.name }}"
+      online: true
+      storage:
+        blobStoreName: "{{ nexus_blob_store_name }}"
+        strictContentTypeValidation: true
+      proxy:
+        remoteUrl: "{{ item.url }}"
+        contentMaxAge: "{{ nexus_proxy_content_max_age | int }}"
+        metadataMaxAge: "{{ nexus_proxy_metadata_max_age | int }}"
+      negativeCache:
+        enabled: true
+        timeToLive: "{{ nexus_negative_cache_ttl | int }}"
+      httpClient:
+        blocked: false
+        autoBlock: true
+      apt:
+        distribution: "{{ item.distribution | default(debian_codename) }}"
+        flat: "{{ item.flat | default(false) | bool }}"
+  loop: "{{ apt_upstreams }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: item.name not in nexus_existing_repo_names
+
+- name: Create APT group repository when enabled
+  ansible.builtin.uri:
+    url: "{{ nexus_rest_api_base_url }}/repositories/apt/group"
+    method: POST
+    user: "{{ nexus_admin_username }}"
+    password: "{{ nexus_admin_password }}"
+    force_basic_auth: true
+    body_format: json
+    status_code:
+      - 201
+      - 204
+      - 400
+      - 404
+    body:
+      name: "{{ apt_group_repo_name }}"
+      online: true
+      storage:
+        blobStoreName: "{{ nexus_blob_store_name }}"
+        strictContentTypeValidation: true
+      group:
+        memberNames: "{{ apt_upstreams | map(attribute='name') | list }}"
+  register: nexus_apt_group_create
+  changed_when: nexus_apt_group_create.status in [201, 204]
+  failed_when: >-
+    nexus_apt_group_create.status not in [201, 204]
+    and (not (nexus_allow_unsupported_apt_group | bool))
+  when:
+    - enable_apt_group | bool
+    - apt_group_repo_name not in nexus_existing_repo_names
+
+- name: Inform when APT group is not supported on this Nexus build
+  ansible.builtin.debug:
+    msg: >-
+      APT group creation endpoint is not available. Use individual APT proxy repositories from apt_upstreams,
+      or set nexus_allow_unsupported_apt_group to false to hard-fail.
+  when:
+    - enable_apt_group | bool
+    - nexus_apt_group_create is defined
+    - nexus_apt_group_create.status in [400, 404]
+
+- name: Create Docker Hub proxy repository
+  ansible.builtin.uri:
+    url: "{{ nexus_rest_api_base_url }}/repositories/docker/proxy"
+    method: POST
+    user: "{{ nexus_admin_username }}"
+    password: "{{ nexus_admin_password }}"
+    force_basic_auth: true
+    body_format: json
+    status_code:
+      - 201
+      - 204
+    body:
+      name: "{{ docker_proxy_repo_name }}"
+      online: true
+      storage:
+        blobStoreName: "{{ nexus_blob_store_name }}"
+        strictContentTypeValidation: true
+      proxy:
+        remoteUrl: "https://{{ docker_upstream }}"
+        contentMaxAge: "{{ nexus_proxy_content_max_age | int }}"
+        metadataMaxAge: "{{ nexus_proxy_metadata_max_age | int }}"
+      negativeCache:
+        enabled: true
+        timeToLive: "{{ nexus_negative_cache_ttl | int }}"
+      httpClient:
+        blocked: false
+        autoBlock: true
+      docker:
+        v1Enabled: false
+        forceBasicAuth: false
+        pathEnabled: "{{ docker_path_enabled | bool }}"
+      dockerProxy:
+        indexType: HUB
+  when: docker_proxy_repo_name not in nexus_existing_repo_names
+
+- name: Create Docker group repository
+  ansible.builtin.uri:
+    url: "{{ nexus_rest_api_base_url }}/repositories/docker/group"
+    method: POST
+    user: "{{ nexus_admin_username }}"
+    password: "{{ nexus_admin_password }}"
+    force_basic_auth: true
+    body_format: json
+    status_code:
+      - 201
+      - 204
+    body:
+      name: "{{ docker_group_repo_name }}"
+      online: true
+      storage:
+        blobStoreName: "{{ nexus_blob_store_name }}"
+        strictContentTypeValidation: true
+      group:
+        memberNames:
+          - "{{ docker_proxy_repo_name }}"
+      docker:
+        v1Enabled: false
+        forceBasicAuth: false
+        pathEnabled: "{{ docker_path_enabled | bool }}"
+  when:
+    - enable_docker_group | bool
+    - docker_group_repo_name not in nexus_existing_repo_names

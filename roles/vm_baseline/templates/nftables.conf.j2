@@ -1,0 +1,25 @@
+#!/usr/sbin/nft -f
+flush ruleset
+
+{% set allowed_ports = ([22, nexus_http_port] + vm_baseline_extra_tcp_ports) | unique | sort %}
+table inet filter {
+  chain input {
+    type filter hook input priority 0; policy drop;
+
+    iif "lo" accept
+    ct state established,related accept
+
+    ip protocol icmp accept
+    ip6 nexthdr icmpv6 accept
+
+    tcp dport { {{ allowed_ports | join(', ') }} } ct state new accept
+  }
+
+  chain forward {
+    type filter hook forward priority 0; policy drop;
+  }
+
+  chain output {
+    type filter hook output priority 0; policy accept;
+  }
+}

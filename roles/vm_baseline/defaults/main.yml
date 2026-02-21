@@ -1,0 +1,11 @@
+---
+vm_baseline_base_packages:
+  - ca-certificates
+  - curl
+  - gnupg
+  - jq
+  - tar
+  - unzip
+  - nftables
+
+vm_baseline_extra_tcp_ports: []

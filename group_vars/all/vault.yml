@@ -1,0 +1,4 @@
+---
+# Encrypt this file with Ansible Vault before real deployments:
+# ansible-vault encrypt group_vars/all/vault.yml
+vault_nexus_admin_password: "CHANGE_ME_WITH_ANSIBLE_VAULT"

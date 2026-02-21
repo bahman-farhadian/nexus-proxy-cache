@@ -1,0 +1,58 @@
+---
+# Core Nexus settings
+nexus_version: "3.84.1-01"
+# Canonical Nexus hostname clients should use (DNS or /etc/hosts managed outside this project).
+nexus_hostname: repo.idops.local
+nexus_http_port: 8081
+# Derived base URLs reused across roles/docs where Nexus endpoints are built.
+nexus_base_url: "http://{{ nexus_hostname }}:{{ nexus_http_port }}"
+nexus_rest_api_base_url: "{{ nexus_base_url }}/service/rest/v1"
+nexus_install_dir: /opt/nexus
+nexus_data_dir: /var/lib/nexus
+nexus_user: nexus
+nexus_group: nexus
+nexus_bind_address: 0.0.0.0
+nexus_context_path: /
+
+# Download settings
+nexus_archive_name: "nexus-{{ nexus_version }}-linux-x86_64.tar.gz"
+nexus_download_url: "https://download.sonatype.com/nexus/3/{{ nexus_archive_name }}"
+# Optional: set to something like sha256:... to pin artifact integrity.
+nexus_download_checksum: ""
+
+# API/auth settings
+nexus_admin_username: admin
+nexus_admin_password: "{{ vault_nexus_admin_password }}"
+nexus_wait_timeout: 900
+
+# Repository defaults
+nexus_blob_store_name: default
+nexus_proxy_content_max_age: 1440
+nexus_proxy_metadata_max_age: 1440
+nexus_negative_cache_ttl: 1440
+
+# Debian/APT settings
+# Debian 13 codename
+debian_codename: trixie
+apt_upstreams:
+  - name: debian-main-proxy
+    url: http://deb.debian.org/debian
+    distribution: "{{ debian_codename }}"
+    flat: false
+  - name: debian-security-proxy
+    url: http://security.debian.org/debian-security
+    distribution: "{{ debian_codename }}-security"
+    flat: false
+enable_apt_group: true
+apt_group_repo_name: debian-apt-group
+# Keep true to continue when Nexus build does not expose /repositories/apt/group.
+nexus_allow_unsupported_apt_group: true
+
+# Docker settings
+docker_upstream: registry-1.docker.io
+docker_proxy_repo_name: docker-hub-proxy
+enable_docker_group: true
+docker_group_repo_name: docker-group
+
+# Use path-based routing on the same Nexus HTTP port (no extra connector ports).
+docker_path_enabled: true

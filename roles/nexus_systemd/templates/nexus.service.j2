@@ -1,0 +1,22 @@
+[Unit]
+Description=Sonatype Nexus Repository OSS
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=forking
+User={{ nexus_user }}
+Group={{ nexus_group }}
+LimitNOFILE=65536
+LimitNPROC=4096
+Environment="NEXUS_HOME={{ nexus_install_dir }}/current"
+Environment="NEXUS_DATA={{ nexus_data_dir }}"
+ExecStart={{ nexus_install_dir }}/current/bin/nexus start
+ExecStop={{ nexus_install_dir }}/current/bin/nexus stop
+Restart=on-failure
+RestartSec=10
+TimeoutStartSec=600
+TimeoutStopSec=600
+
+[Install]
+WantedBy=multi-user.target

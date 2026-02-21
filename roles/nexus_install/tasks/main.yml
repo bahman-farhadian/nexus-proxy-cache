@@ -1,0 +1,97 @@
+---
+- name: Ensure nexus group exists
+  ansible.builtin.group:
+    name: "{{ nexus_group }}"
+    system: true
+    state: present
+
+- name: Ensure nexus user exists
+  ansible.builtin.user:
+    name: "{{ nexus_user }}"
+    group: "{{ nexus_group }}"
+    system: true
+    shell: /usr/sbin/nologin
+    create_home: false
+    state: present
+
+- name: Ensure Nexus install directory exists
+  ansible.builtin.file:
+    path: "{{ nexus_install_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Ensure Nexus data directories exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ nexus_user }}"
+    group: "{{ nexus_group }}"
+    mode: "0750"
+  loop:
+    - "{{ nexus_data_dir }}"
+    - "{{ nexus_data_dir }}/etc"
+
+- name: Download Nexus OSS archive
+  ansible.builtin.get_url:
+    url: "{{ nexus_download_url }}"
+    dest: "/tmp/{{ nexus_archive_name }}"
+    mode: "0644"
+    checksum: "{{ nexus_download_checksum if (nexus_download_checksum | length > 0) else omit }}"
+    force: false
+
+- name: Extract Nexus OSS archive
+  ansible.builtin.unarchive:
+    src: "/tmp/{{ nexus_archive_name }}"
+    dest: "{{ nexus_install_dir }}"
+    remote_src: true
+    creates: "{{ nexus_install_dir }}/nexus-{{ nexus_version }}"
+
+- name: Ensure Nexus release tree ownership
+  ansible.builtin.file:
+    path: "{{ nexus_install_dir }}/nexus-{{ nexus_version }}"
+    state: directory
+    owner: "{{ nexus_user }}"
+    group: "{{ nexus_group }}"
+    recurse: true
+
+- name: Point current symlink to selected Nexus version
+  ansible.builtin.file:
+    src: "{{ nexus_install_dir }}/nexus-{{ nexus_version }}"
+    dest: "{{ nexus_install_dir }}/current"
+    state: link
+    owner: "{{ nexus_user }}"
+    group: "{{ nexus_group }}"
+    force: true
+
+- name: Configure nexus.rc
+  ansible.builtin.template:
+    src: nexus.rc.j2
+    dest: "{{ nexus_install_dir }}/current/bin/nexus.rc"
+    owner: "{{ nexus_user }}"
+    group: "{{ nexus_group }}"
+    mode: "0644"
+  register: nexus_rc_file
+
+- name: Configure nexus.properties
+  ansible.builtin.template:
+    src: nexus.properties.j2
+    dest: "{{ nexus_data_dir }}/etc/nexus.properties"
+    owner: "{{ nexus_user }}"
+    group: "{{ nexus_group }}"
+    mode: "0640"
+  register: nexus_properties_file
+
+- name: Check whether nexus.service is already installed
+  ansible.builtin.stat:
+    path: /etc/systemd/system/nexus.service
+  register: nexus_systemd_unit
+
+- name: Restart Nexus when install-time config changes
+  ansible.builtin.systemd_service:
+    name: nexus
+    state: restarted
+  when:
+    - nexus_systemd_unit.stat.exists
+    - nexus_rc_file.changed or nexus_properties_file.changed
