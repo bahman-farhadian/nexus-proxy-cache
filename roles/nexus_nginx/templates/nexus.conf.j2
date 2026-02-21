@@ -1,7 +1,80 @@
+{% if nexus_tls_enabled | bool and (nexus_tls_certificate_present | default(false) | bool) %}
+server {
+  listen 80 default_server;
+  listen [::]:80 default_server;
+  server_name {{ nexus_tls_domain }} {{ nexus_hostname }} _;
+
+  server_tokens off;
+  client_max_body_size 0;
+
+  location /.well-known/acme-challenge/ {
+    root {{ nexus_tls_certbot_webroot }};
+  }
+
+  location / {
+    return 301 https://$host{% if (nexus_https_port | int) != 443 %}:{{ nexus_https_port }}{% endif %}$request_uri;
+  }
+}
+
+server {
+  listen {{ nexus_https_port }} ssl http2 default_server;
+  listen [::]:{{ nexus_https_port }} ssl http2 default_server;
+  server_name {{ nexus_tls_domain }} {{ nexus_hostname }} _;
+
+  server_tokens off;
+  client_max_body_size 0;
+  proxy_request_buffering off;
+
+  ssl_certificate {{ nexus_tls_cert_fullchain_path }};
+  ssl_certificate_key {{ nexus_tls_cert_privkey_path }};
+  include /etc/letsencrypt/options-ssl-nginx.conf;
+  ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+
+  location / {
+    proxy_http_version 1.1;
+    proxy_set_header Connection "";
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto https;
+    proxy_connect_timeout 60;
+    proxy_read_timeout 3600;
+    proxy_send_timeout 3600;
+    proxy_pass http://127.0.0.1:{{ nexus_http_port }};
+  }
+}
+{% elif nexus_tls_enabled | bool %}
+server {
+  listen 80 default_server;
+  listen [::]:80 default_server;
+  server_name {{ nexus_tls_domain }} {{ nexus_hostname }} _;
+
+  server_tokens off;
+  client_max_body_size 0;
+  proxy_request_buffering off;
+
+  location /.well-known/acme-challenge/ {
+    root {{ nexus_tls_certbot_webroot }};
+  }
+
+  location / {
+    proxy_http_version 1.1;
+    proxy_set_header Connection "";
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_connect_timeout 60;
+    proxy_read_timeout 3600;
+    proxy_send_timeout 3600;
+    proxy_pass http://127.0.0.1:{{ nexus_http_port }};
+  }
+}
+{% else %}
 server {
   listen {{ nexus_public_port }} default_server;
   listen [::]:{{ nexus_public_port }} default_server;
-  server_name {{ nexus_hostname }};
+  server_name {{ nexus_hostname }} _;
 
   server_tokens off;
   client_max_body_size 0;
@@ -20,3 +93,4 @@ server {
     proxy_pass http://127.0.0.1:{{ nexus_http_port }};
   }
 }
+{% endif %}

@@ -7,6 +7,7 @@
   roles:
     - role: vm_baseline
     - role: java
+    - role: postgresql
     - role: nexus_install
     - role: nexus_systemd
     - role: nexus_nginx

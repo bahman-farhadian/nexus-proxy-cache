@@ -1,0 +1,4 @@
+---
+postgresql_server_packages:
+  - postgresql
+  - postgresql-contrib

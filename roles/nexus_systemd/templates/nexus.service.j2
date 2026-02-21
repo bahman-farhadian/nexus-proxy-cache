@@ -11,6 +11,8 @@ LimitNOFILE=65536
 LimitNPROC=4096
 Environment="NEXUS_HOME={{ nexus_install_dir }}/current"
 Environment="NEXUS_DATA={{ nexus_data_dir }}"
+ExecStartPre=/usr/bin/rm -f {{ nexus_install_dir }}/sonatype-work/nexus3/nexus.pid
+ExecStartPre=/usr/bin/rm -f {{ nexus_data_dir }}/nexus.pid
 ExecStart={{ nexus_install_dir }}/current/bin/nexus start
 ExecStop={{ nexus_install_dir }}/current/bin/nexus stop
 Restart=on-failure

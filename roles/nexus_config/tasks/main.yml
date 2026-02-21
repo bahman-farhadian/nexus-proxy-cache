@@ -1,14 +1,14 @@
 ---
 - name: Wait for Nexus TCP port to be reachable
   ansible.builtin.wait_for:
-    host: "{{ nexus_hostname }}"
-    port: "{{ nexus_public_port | int }}"
+    host: 127.0.0.1
+    port: "{{ nexus_http_port | int }}"
     timeout: "{{ nexus_wait_timeout | int }}"
     delay: 5
 
 - name: Wait for Nexus REST API readiness
   ansible.builtin.uri:
-    url: "{{ nexus_rest_api_base_url }}/status"
+    url: "{{ nexus_rest_api_config_base_url }}/status"
     method: GET
     status_code:
       - 200
@@ -23,14 +23,14 @@
   ansible.builtin.fail:
     msg: >-
       Nexus admin password is not set. Create .nexus_admin_password on the control host,
-      store only the password text in it, and ensure nexus_admin_password_file points to it.
+      and keep one password line in the file (comments are allowed above it).
   when:
     - (nexus_admin_password | default('')) | length == 0
       or nexus_admin_password == "CHANGE_ME_WITH_STRONG_PASSWORD"
 
 - name: Check if desired admin password already works
   ansible.builtin.uri:
-    url: "{{ nexus_rest_api_base_url }}/status"
+    url: "{{ nexus_rest_api_config_base_url }}/status"
     method: GET
     user: "{{ nexus_admin_username }}"
     password: "{{ nexus_admin_password }}"
@@ -42,36 +42,155 @@
   changed_when: false
   no_log: true
 
-- name: Read bootstrap admin password file when needed
+- name: Check if fallback default admin password works
+  ansible.builtin.uri:
+    url: "{{ nexus_rest_api_config_base_url }}/status"
+    method: GET
+    user: "{{ nexus_admin_username }}"
+    password: "{{ nexus_admin_default_password_fallback }}"
+    force_basic_auth: true
+    status_code:
+      - 200
+      - 401
+  register: nexus_default_password_check
+  changed_when: false
+  no_log: true
+  when: nexus_desired_password_check.status == 401
+
+- name: Use fallback default admin password when available
+  ansible.builtin.set_fact:
+    nexus_bootstrap_admin_password: "{{ nexus_admin_default_password_fallback }}"
+  changed_when: false
+  no_log: true
+  when:
+    - nexus_desired_password_check.status == 401
+    - nexus_default_password_check is defined
+    - nexus_default_password_check.status == 200
+
+- name: Wait for bootstrap admin password file in Nexus data directory
+  ansible.builtin.wait_for:
+    path: "{{ nexus_data_dir }}/admin.password"
+    state: present
+    timeout: "{{ nexus_bootstrap_password_wait_timeout | int }}"
+  changed_when: false
+  failed_when: false
+  when:
+    - nexus_desired_password_check.status == 401
+    - (nexus_bootstrap_admin_password | default('')) | length == 0
+
+- name: Check bootstrap admin password file in Nexus data directory
+  ansible.builtin.stat:
+    path: "{{ nexus_data_dir }}/admin.password"
+  register: nexus_bootstrap_password_stat
+  changed_when: false
+  when:
+    - nexus_desired_password_check.status == 401
+    - (nexus_bootstrap_admin_password | default('')) | length == 0
+
+- name: Read bootstrap admin password from Nexus data directory
   ansible.builtin.slurp:
     src: "{{ nexus_data_dir }}/admin.password"
   register: nexus_bootstrap_password_file
   changed_when: false
-  failed_when: false
-  no_log: true
-  when: nexus_desired_password_check.status == 401
-
-- name: Set bootstrap password fact
-  ansible.builtin.set_fact:
-    nexus_bootstrap_admin_password: "{{ nexus_bootstrap_password_file.content | b64decode | trim }}"
   no_log: true
   when:
     - nexus_desired_password_check.status == 401
+    - (nexus_bootstrap_admin_password | default('')) | length == 0
+    - nexus_bootstrap_password_stat.stat.exists | default(false)
+
+- name: Set bootstrap password fact from Nexus data directory
+  ansible.builtin.set_fact:
+    nexus_bootstrap_admin_password: "{{ nexus_bootstrap_password_file.content | b64decode | trim }}"
+  changed_when: false
+  no_log: true
+  when:
+    - nexus_desired_password_check.status == 401
+    - (nexus_bootstrap_admin_password | default('')) | length == 0
     - nexus_bootstrap_password_file is defined
     - nexus_bootstrap_password_file.content is defined
+
+- name: Check bootstrap admin password file in Nexus legacy work directory
+  ansible.builtin.stat:
+    path: "{{ nexus_install_dir }}/sonatype-work/nexus3/admin.password"
+  register: nexus_bootstrap_password_legacy_stat
+  changed_when: false
+  when:
+    - nexus_desired_password_check.status == 401
+    - (nexus_bootstrap_admin_password | default('')) | length == 0
+
+- name: Read bootstrap admin password from Nexus legacy work directory
+  ansible.builtin.slurp:
+    src: "{{ nexus_install_dir }}/sonatype-work/nexus3/admin.password"
+  register: nexus_bootstrap_password_legacy_file
+  changed_when: false
+  no_log: true
+  when:
+    - nexus_desired_password_check.status == 401
+    - (nexus_bootstrap_admin_password | default('')) | length == 0
+    - nexus_bootstrap_password_legacy_stat.stat.exists | default(false)
+
+- name: Set bootstrap password fact from Nexus legacy work directory
+  ansible.builtin.set_fact:
+    nexus_bootstrap_admin_password: "{{ nexus_bootstrap_password_legacy_file.content | b64decode | trim }}"
+  changed_when: false
+  no_log: true
+  when:
+    - nexus_desired_password_check.status == 401
+    - (nexus_bootstrap_admin_password | default('')) | length == 0
+    - nexus_bootstrap_password_legacy_file is defined
+    - nexus_bootstrap_password_legacy_file.content is defined
+
+- name: Discover bootstrap admin password file in common Nexus paths
+  ansible.builtin.find:
+    paths:
+      - "{{ nexus_data_dir }}"
+      - "{{ nexus_install_dir }}/sonatype-work"
+    patterns: admin.password
+    file_type: file
+    recurse: true
+  register: nexus_bootstrap_password_find
+  changed_when: false
+  failed_when: false
+  when:
+    - nexus_desired_password_check.status == 401
+    - (nexus_bootstrap_admin_password | default('')) | length == 0
+
+- name: Read bootstrap admin password from discovered path
+  ansible.builtin.slurp:
+    src: "{{ nexus_bootstrap_password_find.files[0].path }}"
+  register: nexus_bootstrap_password_discovered_file
+  changed_when: false
+  no_log: true
+  when:
+    - nexus_desired_password_check.status == 401
+    - (nexus_bootstrap_admin_password | default('')) | length == 0
+    - nexus_bootstrap_password_find is defined
+    - (nexus_bootstrap_password_find.files | default([]) | length) > 0
+
+- name: Set bootstrap password fact from discovered path
+  ansible.builtin.set_fact:
+    nexus_bootstrap_admin_password: "{{ nexus_bootstrap_password_discovered_file.content | b64decode | trim }}"
+  changed_when: false
+  no_log: true
+  when:
+    - nexus_desired_password_check.status == 401
+    - (nexus_bootstrap_admin_password | default('')) | length == 0
+    - nexus_bootstrap_password_discovered_file is defined
+    - nexus_bootstrap_password_discovered_file.content is defined
 
 - name: Fail when no valid admin password source is available
   ansible.builtin.fail:
     msg: >-
-      Unable to authenticate with nexus_admin_password and bootstrap password file was not found.
-      Set nexus_admin_password to the current admin password or reset admin credentials manually.
+      Unable to authenticate with nexus_admin_password, fallback password, and bootstrap password file.
+      Checked {{ nexus_data_dir }}/admin.password and {{ nexus_install_dir }}/sonatype-work/nexus3/admin.password.
+      Set .nexus_admin_password to the current Nexus admin password, or reset admin credentials manually.
   when:
     - nexus_desired_password_check.status == 401
     - (nexus_bootstrap_admin_password | default('')) | length == 0
 
 - name: Set Nexus admin password from desired value
   ansible.builtin.uri:
-    url: "{{ nexus_rest_api_base_url }}/security/users/admin/change-password"
+    url: "{{ nexus_rest_api_config_base_url }}/security/users/admin/change-password"
     method: PUT
     user: "{{ nexus_admin_username }}"
     password: "{{ nexus_bootstrap_admin_password }}"
@@ -86,7 +205,7 @@
 
 - name: Verify admin authentication with desired password
   ansible.builtin.uri:
-    url: "{{ nexus_rest_api_base_url }}/status"
+    url: "{{ nexus_rest_api_config_base_url }}/status"
     method: GET
     user: "{{ nexus_admin_username }}"
     password: "{{ nexus_admin_password }}"
@@ -99,9 +218,226 @@
   changed_when: false
   no_log: true
 
+- name: Query Nexus status checks
+  ansible.builtin.uri:
+    url: "{{ nexus_rest_api_config_base_url }}/status/check"
+    method: GET
+    user: "{{ nexus_admin_username }}"
+    password: "{{ nexus_admin_password }}"
+    force_basic_auth: true
+    return_content: true
+    status_code:
+      - 200
+      - 404
+  register: nexus_status_checks
+  changed_when: false
+  no_log: true
+
+- name: Detect default secret key warning
+  ansible.builtin.set_fact:
+    nexus_default_secret_key_warning_present: >-
+      {{ "Default key in use, secrets are not encrypted!" in (nexus_status_checks.content | default(""))
+         or "Nexus was not configured with an encryption key and is using the Default key." in (nexus_status_checks.content | default(""))
+         or "Nexus was not configured with an encryption key and is using the Default key" in (nexus_status_checks.content | default("")) }}
+  changed_when: false
+
+- name: Trigger secrets re-encryption task
+  ansible.builtin.uri:
+    url: "{{ nexus_rest_api_config_base_url }}/secrets/encryption/re-encrypt"
+    method: PUT
+    user: "{{ nexus_admin_username }}"
+    password: "{{ nexus_admin_password }}"
+    force_basic_auth: true
+    body_format: json
+    body:
+      secretKeyId: "{{ nexus_secret_key_id }}"
+    status_code:
+      - 200
+      - 202
+      - 204
+      - 400
+      - 404
+  register: nexus_secrets_reencrypt_task
+  changed_when: nexus_secrets_reencrypt_task.status in [200, 202, 204]
+  failed_when: nexus_secrets_reencrypt_task.status not in [200, 202, 204, 400, 404]
+  no_log: true
+  when:
+    - nexus_manage_custom_encryption_key | bool
+    - nexus_default_secret_key_warning_present | bool
+
+- name: Trigger API keys re-encryption task
+  ansible.builtin.uri:
+    url: "{{ nexus_rest_api_config_base_url }}/apikeys/encryption/re-encrypt"
+    method: PUT
+    user: "{{ nexus_admin_username }}"
+    password: "{{ nexus_admin_password }}"
+    force_basic_auth: true
+    body_format: json
+    body: {}
+    status_code:
+      - 200
+      - 202
+      - 204
+      - 400
+      - 404
+  register: nexus_apikeys_reencrypt_task
+  changed_when: nexus_apikeys_reencrypt_task.status in [200, 202, 204]
+  failed_when: nexus_apikeys_reencrypt_task.status not in [200, 202, 204, 400, 404]
+  no_log: true
+  when:
+    - nexus_manage_custom_encryption_key | bool
+    - nexus_default_secret_key_warning_present | bool
+
+- name: Wait until custom secret key warning is cleared
+  ansible.builtin.uri:
+    url: "{{ nexus_rest_api_config_base_url }}/status/check"
+    method: GET
+    user: "{{ nexus_admin_username }}"
+    password: "{{ nexus_admin_password }}"
+    force_basic_auth: true
+    return_content: true
+    status_code:
+      - 200
+      - 404
+  register: nexus_status_checks_after_reencrypt
+  retries: 24
+  delay: 5
+  until: >-
+    ("Default key in use, secrets are not encrypted!" not in (nexus_status_checks_after_reencrypt.content | default("")))
+    and ("Nexus was not configured with an encryption key and is using the Default key." not in (nexus_status_checks_after_reencrypt.content | default("")))
+    and ("Nexus was not configured with an encryption key and is using the Default key" not in (nexus_status_checks_after_reencrypt.content | default("")))
+  changed_when: false
+  failed_when: false
+  no_log: true
+  when:
+    - nexus_manage_custom_encryption_key | bool
+    - nexus_default_secret_key_warning_present | bool
+
+- name: Detect default secret key warning after re-encryption attempt
+  ansible.builtin.set_fact:
+    nexus_default_secret_key_warning_after_reencrypt_present: >-
+      {{ "Default key in use, secrets are not encrypted!" in (nexus_status_checks_after_reencrypt.content | default(nexus_status_checks.content | default("")))
+         or "Nexus was not configured with an encryption key and is using the Default key." in (nexus_status_checks_after_reencrypt.content | default(nexus_status_checks.content | default("")))
+         or "Nexus was not configured with an encryption key and is using the Default key" in (nexus_status_checks_after_reencrypt.content | default(nexus_status_checks.content | default(""))) }}
+  changed_when: false
+  when: nexus_manage_custom_encryption_key | bool
+
+- name: Warn when default secret key warning is still present
+  ansible.builtin.debug:
+    msg: >-
+      Nexus still reports default secret encryption key warning after re-encryption API calls.
+      Deployment continues, but check nexus.secrets.file configuration and rerun deploy.
+  when:
+    - nexus_manage_custom_encryption_key | bool
+    - nexus_default_secret_key_warning_after_reencrypt_present | default(false) | bool
+
+- name: Query Nexus status checks after security bootstrap
+  ansible.builtin.uri:
+    url: "{{ nexus_rest_api_config_base_url }}/status/check"
+    method: GET
+    user: "{{ nexus_admin_username }}"
+    password: "{{ nexus_admin_password }}"
+    force_basic_auth: true
+    return_content: true
+    status_code:
+      - 200
+      - 404
+  register: nexus_status_checks_final
+  changed_when: false
+  no_log: true
+
+- name: Detect H2 status warning after bootstrap
+  ansible.builtin.set_fact:
+    nexus_h2_warning_present: >-
+      {{ "Consider migrating to PostgreSQL" in (nexus_status_checks_final.content | default("")) }}
+  changed_when: false
+
+- name: Restart Nexus once after datastore config changes when H2 warning is still present
+  ansible.builtin.systemd_service:
+    name: nexus
+    state: restarted
+  when:
+    - nexus_database_backend == "postgresql"
+    - nexus_h2_warning_present | bool
+    - nexus_store_properties_files is defined
+    - (
+      nexus_store_properties_files.results
+      | selectattr('changed', 'equalto', true)
+      | list
+      | length
+      ) > 0
+
+- name: Wait for Nexus REST API after restart
+  ansible.builtin.uri:
+    url: "{{ nexus_rest_api_config_base_url }}/status"
+    method: GET
+    user: "{{ nexus_admin_username }}"
+    password: "{{ nexus_admin_password }}"
+    force_basic_auth: true
+    status_code: 200
+  register: nexus_status_after_restart
+  retries: 60
+  delay: 5
+  until: nexus_status_after_restart.status == 200
+  changed_when: false
+  no_log: true
+  when:
+    - nexus_database_backend == "postgresql"
+    - nexus_h2_warning_present | bool
+    - nexus_store_properties_files is defined
+    - (
+      nexus_store_properties_files.results
+      | selectattr('changed', 'equalto', true)
+      | list
+      | length
+      ) > 0
+
+- name: Re-check H2 status warning after restart
+  ansible.builtin.uri:
+    url: "{{ nexus_rest_api_config_base_url }}/status/check"
+    method: GET
+    user: "{{ nexus_admin_username }}"
+    password: "{{ nexus_admin_password }}"
+    force_basic_auth: true
+    return_content: true
+    status_code:
+      - 200
+      - 404
+  register: nexus_status_checks_after_restart
+  changed_when: false
+  no_log: true
+  when:
+    - nexus_database_backend == "postgresql"
+    - nexus_h2_warning_present | bool
+    - nexus_store_properties_files is defined
+    - (
+      nexus_store_properties_files.results
+      | selectattr('changed', 'equalto', true)
+      | list
+      | length
+      ) > 0
+
+- name: Detect H2 status warning after restart
+  ansible.builtin.set_fact:
+    nexus_h2_warning_after_restart_present: >-
+      {{ "Consider migrating to PostgreSQL" in (nexus_status_checks_after_restart.content | default(nexus_status_checks_final.content | default(""))) }}
+  changed_when: false
+  when:
+    - nexus_database_backend == "postgresql"
+
+- name: Warn when PostgreSQL backend is requested but Nexus still reports H2
+  ansible.builtin.debug:
+    msg: >-
+      Nexus still reports H2 datastore usage while nexus_database_backend is postgresql.
+      Deployment continues, but confirm PostgreSQL connectivity and credentials,
+      then reset/migrate existing H2 data before redeploying.
+  when:
+    - nexus_database_backend == "postgresql"
+    - nexus_h2_warning_after_restart_present | default(false) | bool
+
 - name: Query existing repositories
   ansible.builtin.uri:
-    url: "{{ nexus_rest_api_base_url }}/repositories"
+    url: "{{ nexus_rest_api_config_base_url }}/repositories"
     method: GET
     user: "{{ nexus_admin_username }}"
     password: "{{ nexus_admin_password }}"
@@ -119,7 +455,7 @@
 
 - name: Create APT proxy repositories
   ansible.builtin.uri:
-    url: "{{ nexus_rest_api_base_url }}/repositories/apt/proxy"
+    url: "{{ nexus_rest_api_config_base_url }}/repositories/apt/proxy"
     method: POST
     user: "{{ nexus_admin_username }}"
     password: "{{ nexus_admin_password }}"
@@ -145,7 +481,7 @@
         blocked: false
         autoBlock: true
       apt:
-        distribution: "{{ item.distribution | default(debian_codename) }}"
+        distribution: "{{ item.distribution | default(debian13_codename) }}"
         flat: "{{ item.flat | default(false) | bool }}"
   loop: "{{ apt_upstreams }}"
   loop_control:
@@ -154,7 +490,7 @@
 
 - name: Create APT group repository when enabled
   ansible.builtin.uri:
-    url: "{{ nexus_rest_api_base_url }}/repositories/apt/group"
+    url: "{{ nexus_rest_api_config_base_url }}/repositories/apt/group"
     method: POST
     user: "{{ nexus_admin_username }}"
     password: "{{ nexus_admin_password }}"
@@ -194,7 +530,7 @@
 
 - name: Create Docker Hub proxy repository
   ansible.builtin.uri:
-    url: "{{ nexus_rest_api_base_url }}/repositories/docker/proxy"
+    url: "{{ nexus_rest_api_config_base_url }}/repositories/docker/proxy"
     method: POST
     user: "{{ nexus_admin_username }}"
     password: "{{ nexus_admin_password }}"
@@ -229,7 +565,7 @@
 
 - name: Create Docker group repository
   ansible.builtin.uri:
-    url: "{{ nexus_rest_api_base_url }}/repositories/docker/group"
+    url: "{{ nexus_rest_api_config_base_url }}/repositories/docker/group"
     method: POST
     user: "{{ nexus_admin_username }}"
     password: "{{ nexus_admin_password }}"

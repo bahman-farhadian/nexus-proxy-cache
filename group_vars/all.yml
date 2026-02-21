@@ -3,14 +3,31 @@
 nexus_version: "3.89.1-02"
 # Canonical Nexus hostname clients should use (DNS or /etc/hosts managed outside this project).
 nexus_hostname: repo.idops.local
+# Public IP used by external DNS A/AAAA records (documentational + validation for TLS mode).
+nexus_public_ip: 203.0.113.10
 # Internal Nexus application port (Nexus JVM service listens here).
 nexus_http_port: 8081
 # Public HTTP port exposed via Nginx reverse proxy.
+# Keep at 80 when TLS mode is enabled (Let's Encrypt HTTP-01 challenge).
 nexus_public_port: 80
+# Optional HTTPS exposure for public deployments (Let's Encrypt + Nginx).
+nexus_tls_enabled: false
+nexus_https_port: 443
+nexus_tls_domain: "{{ nexus_hostname }}"
+nexus_tls_email: change-me@example.com
+nexus_letsencrypt_staging: false
+nexus_tls_certbot_webroot: /var/www/certbot
+nexus_tls_cert_fullchain_path: "/etc/letsencrypt/live/{{ nexus_tls_domain }}/fullchain.pem"
+nexus_tls_cert_privkey_path: "/etc/letsencrypt/live/{{ nexus_tls_domain }}/privkey.pem"
 # Derived base URLs reused across roles/docs where Nexus endpoints are built.
+nexus_external_scheme: "{{ 'https' if (nexus_tls_enabled | bool) else 'http' }}"
+nexus_external_port: "{{ (nexus_https_port if (nexus_tls_enabled | bool) else nexus_public_port) | int }}"
 nexus_base_url: >-
-  http://{{ nexus_hostname }}{% if (nexus_public_port | int) != 80 %}:{{ nexus_public_port }}{% endif %}
+  {{ nexus_external_scheme }}://{{ nexus_hostname }}{% if (nexus_external_port | int) != (443 if nexus_external_scheme == 'https' else 80) %}:{{ nexus_external_port }}{% endif %}
 nexus_rest_api_base_url: "{{ nexus_base_url }}/service/rest/v1"
+# Internal control-plane URL used by Ansible on the Nexus host itself.
+# Keeps bootstrap independent from DNS and Nginx routing.
+nexus_rest_api_config_base_url: "http://127.0.0.1:{{ nexus_http_port }}/service/rest/v1"
 nexus_install_dir: /opt/nexus
 nexus_data_dir: /var/lib/nexus
 nexus_user: nexus
@@ -23,14 +40,60 @@ nexus_archive_name: "nexus-{{ nexus_version }}-linux-x86_64.tar.gz"
 nexus_download_url: "https://download.sonatype.com/nexus/3/{{ nexus_archive_name }}"
 # Optional: set to something like sha256:... to pin artifact integrity.
 nexus_download_checksum: ""
+# JVM memory tuning (use conservative defaults for small VMs).
+nexus_jvm_xms: 512m
+nexus_jvm_xmx: 512m
+nexus_jvm_max_direct_memory: 512m
+# Manage custom Nexus secret encryption key to avoid "Default Secret Encryption Key" warning.
+nexus_manage_custom_encryption_key: true
+nexus_secrets_file: "{{ nexus_data_dir }}/etc/nexus-secrets.json"
+nexus_secret_key_id: ansible-key-1
+nexus_secret_key_value: >-
+  {{ lookup('ansible.builtin.password', playbook_dir ~ '/.nexus_secret_key chars=ascii_letters,digits length=48') }}
+nexus_secret_fixed_salt: >-
+  {{ lookup('ansible.builtin.password', playbook_dir ~ '/.nexus_secret_salt chars=ascii_letters,digits length=32') }}
+nexus_secret_fixed_iv: >-
+  {{ lookup('ansible.builtin.password', playbook_dir ~ '/.nexus_secret_iv chars=ascii_letters,digits length=16') }}
 
 # API/auth settings
 nexus_admin_username: admin
 # Local password file on the Ansible control host (gitignored).
 nexus_admin_password_file: "{{ playbook_dir }}/.nexus_admin_password"
-# Loaded at runtime from nexus_admin_password_file.
-nexus_admin_password: "{{ lookup('ansible.builtin.file', nexus_admin_password_file, errors='ignore') | trim }}"
+# Uses first non-empty and non-comment line from password file.
+nexus_admin_password: >-
+  {{ lookup('ansible.builtin.file', nexus_admin_password_file, errors='ignore').splitlines()
+     | map('trim')
+     | reject('equalto', '')
+     | reject('match', '^#')
+     | list
+     | first
+     | default('') }}
+# Fallback used when desired password does not authenticate and bootstrap file is missing.
+nexus_admin_default_password_fallback: admin123
 nexus_wait_timeout: 900
+nexus_bootstrap_password_wait_timeout: 300
+
+# Database backend
+# Set to postgresql to avoid H2 scale-limit recommendations in Nexus status checks.
+nexus_database_backend: postgresql
+nexus_postgresql_local_enabled: true
+nexus_postgresql_host: 127.0.0.1
+nexus_postgresql_port: 5432
+nexus_postgresql_db: nexus
+nexus_postgresql_schema: nexus
+nexus_postgresql_user: nexus
+nexus_postgresql_password_file: "{{ playbook_dir }}/.nexus_db_password"
+nexus_postgresql_password: >-
+  {{ lookup('ansible.builtin.file', nexus_postgresql_password_file, errors='ignore').splitlines()
+     | map('trim')
+     | reject('equalto', '')
+     | reject('match', '^#')
+     | list
+     | first
+     | default('') }}
+nexus_postgresql_jdbc_params: "currentSchema={{ nexus_postgresql_schema }}"
+nexus_postgresql_jdbc_url: >-
+  jdbc\:postgresql\://{{ nexus_postgresql_host }}\:{{ nexus_postgresql_port }}/{{ nexus_postgresql_db }}?{{ nexus_postgresql_jdbc_params }}
 
 # Repository defaults
 nexus_blob_store_name: default
@@ -39,16 +102,26 @@ nexus_proxy_metadata_max_age: 1440
 nexus_negative_cache_ttl: 1440
 
 # Debian/APT settings
-# Debian 13 codename
-debian_codename: trixie
+debian12_codename: bookworm
+debian13_codename: trixie
+# Backward-compatible alias for older overrides/templates.
+debian_codename: "{{ debian13_codename }}"
 apt_upstreams:
-  - name: debian-main-proxy
+  - name: debian12-main-proxy
     url: http://deb.debian.org/debian
-    distribution: "{{ debian_codename }}"
+    distribution: "{{ debian12_codename }}"
     flat: false
-  - name: debian-security-proxy
+  - name: debian12-security-proxy
     url: http://security.debian.org/debian-security
-    distribution: "{{ debian_codename }}-security"
+    distribution: "{{ debian12_codename }}-security"
+    flat: false
+  - name: debian13-main-proxy
+    url: http://deb.debian.org/debian
+    distribution: "{{ debian13_codename }}"
+    flat: false
+  - name: debian13-security-proxy
+    url: http://security.debian.org/debian-security
+    distribution: "{{ debian13_codename }}-security"
     flat: false
 enable_apt_group: true
 apt_group_repo_name: debian-apt-group
@@ -63,3 +136,6 @@ docker_group_repo_name: docker-group
 
 # Use path-based routing on the same Nexus HTTP port (no extra connector ports).
 docker_path_enabled: true
+
+# Firewall extras: expose HTTPS when TLS mode is enabled.
+vm_baseline_extra_tcp_ports: "{{ [nexus_https_port | int] if (nexus_tls_enabled | bool) else [] }}"

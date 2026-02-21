@@ -1,0 +1,166 @@
+---
+- name: Fail when PostgreSQL password is not configured
+  ansible.builtin.fail:
+    msg: >-
+      Nexus PostgreSQL password is not set. Create .nexus_db_password on the control host,
+      keep one password line in the file, and re-run deployment.
+  when:
+    - nexus_database_backend == "postgresql"
+    - (nexus_postgresql_password | default("")) | length == 0
+      or nexus_postgresql_password == "CHANGE_ME_WITH_STRONG_DB_PASSWORD"
+
+- name: Install PostgreSQL server packages
+  ansible.builtin.apt:
+    name: "{{ postgresql_server_packages }}"
+    state: present
+  when:
+    - nexus_database_backend == "postgresql"
+    - nexus_postgresql_local_enabled | bool
+
+- name: Ensure PostgreSQL service is enabled and started
+  ansible.builtin.systemd_service:
+    name: postgresql
+    enabled: true
+    state: started
+  when:
+    - nexus_database_backend == "postgresql"
+    - nexus_postgresql_local_enabled | bool
+
+- name: Ensure become-user Ansible temp directory exists for postgres
+  ansible.builtin.file:
+    path: /var/lib/postgresql/.ansible/tmp
+    state: directory
+    owner: postgres
+    group: postgres
+    mode: "0700"
+  when:
+    - nexus_database_backend == "postgresql"
+    - nexus_postgresql_local_enabled | bool
+
+- name: Check PostgreSQL role exists
+  ansible.builtin.command:
+    argv:
+      - psql
+      - -tAc
+      - "SELECT 1 FROM pg_roles WHERE rolname='{{ nexus_postgresql_user }}';"
+  become_user: postgres
+  register: nexus_postgresql_role_exists
+  changed_when: false
+  when:
+    - nexus_database_backend == "postgresql"
+    - nexus_postgresql_local_enabled | bool
+
+- name: Create PostgreSQL role for Nexus
+  ansible.builtin.command:
+    argv:
+      - psql
+      - -v
+      - ON_ERROR_STOP=1
+      - -c
+      - >-
+        CREATE ROLE "{{ nexus_postgresql_user }}"
+        LOGIN PASSWORD '{{ nexus_postgresql_password | replace("'", "''") }}';
+  become_user: postgres
+  no_log: true
+  when:
+    - nexus_database_backend == "postgresql"
+    - nexus_postgresql_local_enabled | bool
+    - (nexus_postgresql_role_exists.stdout | default("") | trim) != "1"
+
+- name: Check PostgreSQL database exists
+  ansible.builtin.command:
+    argv:
+      - psql
+      - -tAc
+      - "SELECT 1 FROM pg_database WHERE datname='{{ nexus_postgresql_db }}';"
+  become_user: postgres
+  register: nexus_postgresql_db_exists
+  changed_when: false
+  when:
+    - nexus_database_backend == "postgresql"
+    - nexus_postgresql_local_enabled | bool
+
+- name: Create PostgreSQL database for Nexus
+  ansible.builtin.command:
+    argv:
+      - psql
+      - -v
+      - ON_ERROR_STOP=1
+      - -c
+      - >-
+        CREATE DATABASE "{{ nexus_postgresql_db }}"
+        OWNER "{{ nexus_postgresql_user }}"
+        ENCODING 'UTF8';
+  become_user: postgres
+  when:
+    - nexus_database_backend == "postgresql"
+    - nexus_postgresql_local_enabled | bool
+    - (nexus_postgresql_db_exists.stdout | default("") | trim) != "1"
+
+- name: Check PostgreSQL schema exists
+  ansible.builtin.command:
+    argv:
+      - psql
+      - -d
+      - "{{ nexus_postgresql_db }}"
+      - -tAc
+      - "SELECT 1 FROM pg_namespace WHERE nspname='{{ nexus_postgresql_schema }}';"
+  become_user: postgres
+  register: nexus_postgresql_schema_exists
+  changed_when: false
+  when:
+    - nexus_database_backend == "postgresql"
+    - nexus_postgresql_local_enabled | bool
+
+- name: Create PostgreSQL schema for Nexus
+  ansible.builtin.command:
+    argv:
+      - psql
+      - -d
+      - "{{ nexus_postgresql_db }}"
+      - -v
+      - ON_ERROR_STOP=1
+      - -c
+      - >-
+        CREATE SCHEMA "{{ nexus_postgresql_schema }}"
+        AUTHORIZATION "{{ nexus_postgresql_user }}";
+  become_user: postgres
+  when:
+    - nexus_database_backend == "postgresql"
+    - nexus_postgresql_local_enabled | bool
+    - (nexus_postgresql_schema_exists.stdout | default("") | trim) != "1"
+
+- name: Check pg_trgm extension exists in Nexus schema
+  ansible.builtin.command:
+    argv:
+      - psql
+      - -d
+      - "{{ nexus_postgresql_db }}"
+      - -tAc
+      - >-
+        SELECT 1
+        FROM pg_extension e
+        JOIN pg_namespace n ON n.oid = e.extnamespace
+        WHERE e.extname='pg_trgm' AND n.nspname='{{ nexus_postgresql_schema }}';
+  become_user: postgres
+  register: nexus_postgresql_pg_trgm_exists
+  changed_when: false
+  when:
+    - nexus_database_backend == "postgresql"
+    - nexus_postgresql_local_enabled | bool
+
+- name: Create pg_trgm extension in Nexus schema
+  ansible.builtin.command:
+    argv:
+      - psql
+      - -d
+      - "{{ nexus_postgresql_db }}"
+      - -v
+      - ON_ERROR_STOP=1
+      - -c
+      - "CREATE EXTENSION IF NOT EXISTS pg_trgm SCHEMA \"{{ nexus_postgresql_schema }}\";"
+  become_user: postgres
+  when:
+    - nexus_database_backend == "postgresql"
+    - nexus_postgresql_local_enabled | bool
+    - (nexus_postgresql_pg_trgm_exists.stdout | default("") | trim) != "1"

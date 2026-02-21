@@ -1,33 +1,158 @@
 ---
-- name: Install Nginx
+- name: Validate TLS domain is not an IP address
+  ansible.builtin.fail:
+    msg: >-
+      Let's Encrypt cannot issue certificates for raw IP addresses.
+      Set nexus_tls_domain to a DNS name pointing to nexus_public_ip.
+  when:
+    - nexus_tls_enabled | bool
+    - nexus_tls_domain is match('^(?:[0-9]{1,3}\\.){3}[0-9]{1,3}$') or (':' in nexus_tls_domain)
+
+- name: Validate public IP is set when TLS mode is enabled
+  ansible.builtin.fail:
+    msg: >-
+      nexus_public_ip must be set when nexus_tls_enabled is true.
+      Use the VM public IP and map nexus_tls_domain to it in DNS.
+  when:
+    - nexus_tls_enabled | bool
+    - (nexus_public_ip | default('') | length) == 0 or nexus_public_ip == "203.0.113.10"
+
+- name: Validate Let's Encrypt email is set when TLS mode is enabled
+  ansible.builtin.fail:
+    msg: >-
+      nexus_tls_email must be set to a real mailbox when nexus_tls_enabled is true.
+      Replace change-me@example.com in group_vars/all.yml.
+  when:
+    - nexus_tls_enabled | bool
+    - nexus_tls_email == "change-me@example.com"
+
+- name: Validate HTTP challenge port when TLS mode is enabled
+  ansible.builtin.fail:
+    msg: >-
+      nexus_public_port must stay 80 when nexus_tls_enabled is true because
+      Let's Encrypt HTTP-01 validation and HTTP-to-HTTPS redirect both use port 80.
+  when:
+    - nexus_tls_enabled | bool
+    - (nexus_public_port | int) != 80
+
+- name: Install Nginx and optional TLS tooling packages
   ansible.builtin.apt:
-    name: nginx
+    name: "{{ (['nginx'] + (['certbot'] if (nexus_tls_enabled | bool) else [])) | unique }}"
     state: present
+
+- name: Ensure Let's Encrypt webroot directory exists
+  ansible.builtin.file:
+    path: "{{ nexus_tls_certbot_webroot }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: nexus_tls_enabled | bool
+
+- name: Check if TLS certificate already exists
+  ansible.builtin.stat:
+    path: "{{ nexus_tls_cert_fullchain_path }}"
+  register: nexus_tls_cert_stat
+  changed_when: false
+  when: nexus_tls_enabled | bool
 
 - name: Install Nexus Nginx virtual host
   ansible.builtin.template:
     src: nexus.conf.j2
-    dest: /etc/nginx/sites-available/nexus.conf
+    dest: /etc/nginx/conf.d/00-nexus.conf
     owner: root
     group: root
     mode: "0644"
-  notify: Reload nginx
+  vars:
+    nexus_tls_certificate_present: "{{ nexus_tls_cert_stat.stat.exists | default(false) }}"
+  notify: Restart nginx
 
-- name: Enable Nexus Nginx virtual host
-  ansible.builtin.file:
-    src: /etc/nginx/sites-available/nexus.conf
-    dest: /etc/nginx/sites-enabled/nexus.conf
-    state: link
-  notify: Reload nginx
-
-- name: Disable default Nginx virtual host
+- name: Remove default Nginx site symlink
   ansible.builtin.file:
     path: /etc/nginx/sites-enabled/default
     state: absent
-  notify: Reload nginx
+  notify: Restart nginx
+
+- name: Remove default Nginx site file
+  ansible.builtin.file:
+    path: /etc/nginx/sites-available/default
+    state: absent
+  notify: Restart nginx
+
+- name: Remove default Nginx conf.d file when present
+  ansible.builtin.file:
+    path: /etc/nginx/conf.d/default.conf
+    state: absent
+  notify: Restart nginx
+
+- name: Remove legacy Nexus site symlink
+  ansible.builtin.file:
+    path: /etc/nginx/sites-enabled/nexus.conf
+    state: absent
+  notify: Restart nginx
+
+- name: Remove legacy Nexus site file
+  ansible.builtin.file:
+    path: /etc/nginx/sites-available/nexus.conf
+    state: absent
+  notify: Restart nginx
+
+- name: Validate Nginx configuration
+  ansible.builtin.command: nginx -t
+  changed_when: false
 
 - name: Ensure Nginx service is enabled and started
   ansible.builtin.systemd_service:
     name: nginx
     enabled: true
     state: started
+
+- name: Apply pending Nginx changes before certificate issuance
+  ansible.builtin.meta: flush_handlers
+  when: nexus_tls_enabled | bool
+
+- name: Request Let's Encrypt certificate
+  ansible.builtin.command: >-
+    certbot certonly --webroot -w {{ nexus_tls_certbot_webroot }}
+    --non-interactive --agree-tos --keep-until-expiring
+    --email {{ nexus_tls_email }}
+    -d {{ nexus_tls_domain }}
+    {% if nexus_letsencrypt_staging | bool %}--staging{% endif %}
+  args:
+    creates: "{{ nexus_tls_cert_fullchain_path }}"
+  register: nexus_certbot_issue
+  changed_when: nexus_certbot_issue.rc == 0
+  when:
+    - nexus_tls_enabled | bool
+    - not (nexus_tls_cert_stat.stat.exists | default(false))
+
+- name: Re-check TLS certificate after issuance
+  ansible.builtin.stat:
+    path: "{{ nexus_tls_cert_fullchain_path }}"
+  register: nexus_tls_cert_stat_after
+  changed_when: false
+  when: nexus_tls_enabled | bool
+
+- name: Reinstall Nexus Nginx virtual host after certificate issuance
+  ansible.builtin.template:
+    src: nexus.conf.j2
+    dest: /etc/nginx/conf.d/00-nexus.conf
+    owner: root
+    group: root
+    mode: "0644"
+  vars:
+    nexus_tls_certificate_present: "{{ nexus_tls_cert_stat_after.stat.exists | default(false) }}"
+  notify: Restart nginx
+  when: nexus_tls_enabled | bool
+
+- name: Validate Nginx configuration after TLS issuance
+  ansible.builtin.command: nginx -t
+  changed_when: false
+  when: nexus_tls_enabled | bool
+
+- name: Ensure certbot renewal timer is enabled and running
+  ansible.builtin.systemd_service:
+    name: certbot.timer
+    enabled: true
+    state: started
+  when: nexus_tls_enabled | bool

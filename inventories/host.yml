@@ -5,8 +5,8 @@ all:
       hosts:
         nexus_vm:
           # Replace with your Nexus VM reachable address/hostname.
-          ansible_host: 192.168.24.2
-          ansible_user: root
+          ansible_host: change-me-host-or-ip
+          ansible_user: change-me-ssh-user
           # Set SSH port. Use 22 for default SSH, or your custom port.
           ansible_port: 2222
           ansible_python_interpreter: /usr/bin/python3

@@ -10,7 +10,9 @@
     name: "{{ nexus_user }}"
     group: "{{ nexus_group }}"
     system: true
-    shell: /usr/sbin/nologin
+    # Sonatype requires a valid shell for the process user.
+    shell: /bin/bash
+    home: "{{ nexus_install_dir }}"
     create_home: false
     state: present
 
@@ -32,6 +34,52 @@
   loop:
     - "{{ nexus_data_dir }}"
     - "{{ nexus_data_dir }}/etc"
+    - "{{ nexus_data_dir }}/etc/fabric"
+
+- name: Ensure Nexus launcher legacy work parent directory exists
+  ansible.builtin.file:
+    path: "{{ nexus_install_dir }}/sonatype-work"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Check Nexus launcher legacy work path type
+  ansible.builtin.stat:
+    path: "{{ nexus_install_dir }}/sonatype-work/nexus3"
+  register: nexus_legacy_work_path
+  changed_when: false
+
+- name: Point legacy Nexus work path to configured data directory when absent
+  ansible.builtin.file:
+    src: "{{ nexus_data_dir }}"
+    dest: "{{ nexus_install_dir }}/sonatype-work/nexus3"
+    state: link
+    force: false
+  when: not nexus_legacy_work_path.stat.exists
+
+- name: Ensure ownership on existing legacy Nexus work directory
+  ansible.builtin.file:
+    path: "{{ nexus_install_dir }}/sonatype-work/nexus3"
+    state: directory
+    owner: "{{ nexus_user }}"
+    group: "{{ nexus_group }}"
+    mode: "0750"
+    recurse: true
+  when:
+    - nexus_legacy_work_path.stat.exists
+    - nexus_legacy_work_path.stat.isdir
+
+- name: Ensure Nexus legacy configuration directories exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ nexus_user }}"
+    group: "{{ nexus_group }}"
+    mode: "0750"
+  loop:
+    - "{{ nexus_install_dir }}/sonatype-work/nexus3/etc"
+    - "{{ nexus_install_dir }}/sonatype-work/nexus3/etc/fabric"
 
 - name: Download Nexus OSS archive
   ansible.builtin.get_url:
@@ -74,14 +122,80 @@
     mode: "0644"
   register: nexus_rc_file
 
-- name: Configure nexus.properties
+- name: Configure nexus.properties in all Nexus config paths
   ansible.builtin.template:
     src: nexus.properties.j2
-    dest: "{{ nexus_data_dir }}/etc/nexus.properties"
+    dest: "{{ item }}"
     owner: "{{ nexus_user }}"
     group: "{{ nexus_group }}"
     mode: "0640"
-  register: nexus_properties_file
+  loop:
+    - "{{ nexus_data_dir }}/etc/nexus.properties"
+    - "{{ nexus_install_dir }}/sonatype-work/nexus3/etc/nexus.properties"
+  register: nexus_properties_files
+
+- name: Configure Nexus secrets encryption key file
+  ansible.builtin.template:
+    src: nexus-secrets.json.j2
+    dest: "{{ nexus_secrets_file }}"
+    owner: "{{ nexus_user }}"
+    group: "{{ nexus_group }}"
+    mode: "0640"
+  register: nexus_secrets_file_cfg
+  when: nexus_manage_custom_encryption_key | bool
+
+- name: Configure Nexus PostgreSQL store properties in all Nexus config paths
+  ansible.builtin.template:
+    src: nexus-store.properties.j2
+    dest: "{{ item }}"
+    owner: "{{ nexus_user }}"
+    group: "{{ nexus_group }}"
+    mode: "0640"
+  loop:
+    - "{{ nexus_data_dir }}/etc/fabric/nexus-store.properties"
+    - "{{ nexus_install_dir }}/sonatype-work/nexus3/etc/fabric/nexus-store.properties"
+  register: nexus_store_properties_files
+  when: nexus_database_backend == "postgresql"
+
+- name: Remove Nexus store properties when not using PostgreSQL
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "{{ nexus_data_dir }}/etc/fabric/nexus-store.properties"
+    - "{{ nexus_install_dir }}/sonatype-work/nexus3/etc/fabric/nexus-store.properties"
+  register: nexus_store_properties_absent
+  when: nexus_database_backend != "postgresql"
+
+- name: Tune Nexus JVM initial heap size
+  ansible.builtin.lineinfile:
+    path: "{{ nexus_install_dir }}/current/bin/nexus.vmoptions"
+    regexp: "^-Xms"
+    line: "-Xms{{ nexus_jvm_xms }}"
+    owner: "{{ nexus_user }}"
+    group: "{{ nexus_group }}"
+    mode: "0644"
+  register: nexus_vmoptions_xms
+
+- name: Tune Nexus JVM maximum heap size
+  ansible.builtin.lineinfile:
+    path: "{{ nexus_install_dir }}/current/bin/nexus.vmoptions"
+    regexp: "^-Xmx"
+    line: "-Xmx{{ nexus_jvm_xmx }}"
+    owner: "{{ nexus_user }}"
+    group: "{{ nexus_group }}"
+    mode: "0644"
+  register: nexus_vmoptions_xmx
+
+- name: Tune Nexus JVM direct memory size
+  ansible.builtin.lineinfile:
+    path: "{{ nexus_install_dir }}/current/bin/nexus.vmoptions"
+    regexp: "^-XX:MaxDirectMemorySize="
+    line: "-XX:MaxDirectMemorySize={{ nexus_jvm_max_direct_memory }}"
+    owner: "{{ nexus_user }}"
+    group: "{{ nexus_group }}"
+    mode: "0644"
+  register: nexus_vmoptions_direct
 
 - name: Check whether nexus.service is already installed
   ansible.builtin.stat:
@@ -94,4 +208,35 @@
     state: restarted
   when:
     - nexus_systemd_unit.stat.exists
-    - nexus_rc_file.changed or nexus_properties_file.changed
+    - nexus_rc_file.changed
+      or (
+        nexus_properties_files is defined
+        and (
+          nexus_properties_files.results
+          | selectattr('changed', 'equalto', true)
+          | list
+          | length
+        ) > 0
+      )
+      or (nexus_secrets_file_cfg is defined and nexus_secrets_file_cfg.changed)
+      or (
+        nexus_store_properties_files is defined
+        and (
+          nexus_store_properties_files.results
+          | selectattr('changed', 'equalto', true)
+          | list
+          | length
+        ) > 0
+      )
+      or (
+        nexus_store_properties_absent is defined
+        and (
+          nexus_store_properties_absent.results
+          | selectattr('changed', 'equalto', true)
+          | list
+          | length
+        ) > 0
+      )
+      or nexus_vmoptions_xms.changed
+      or nexus_vmoptions_xmx.changed
+      or nexus_vmoptions_direct.changed

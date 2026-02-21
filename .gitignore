@@ -2,3 +2,8 @@
 __pycache__/
 *.retry
 .nexus_admin_password
+.nexus_db_password
+.ansible/
+.nexus_secret_key
+.nexus_secret_salt
+.nexus_secret_iv

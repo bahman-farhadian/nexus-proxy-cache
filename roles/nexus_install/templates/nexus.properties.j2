@@ -3,3 +3,9 @@ application-port={{ nexus_http_port }}
 application-host={{ nexus_bind_address }}
 nexus-context-path={{ nexus_context_path }}
 nexus.datadir={{ nexus_data_dir }}
+{% if nexus_database_backend == "postgresql" %}
+nexus.datastore.enabled=true
+{% endif %}
+{% if nexus_manage_custom_encryption_key | bool %}
+nexus.secrets.file={{ nexus_secrets_file }}
+{% endif %}
