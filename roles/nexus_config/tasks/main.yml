@@ -2,7 +2,7 @@
 - name: Wait for Nexus TCP port to be reachable
   ansible.builtin.wait_for:
     host: "{{ nexus_hostname }}"
-    port: "{{ nexus_http_port | int }}"
+    port: "{{ nexus_public_port | int }}"
     timeout: "{{ nexus_wait_timeout | int }}"
     delay: 5
 

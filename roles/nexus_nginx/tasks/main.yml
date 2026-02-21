@@ -1,0 +1,33 @@
+---
+- name: Install Nginx
+  ansible.builtin.apt:
+    name: nginx
+    state: present
+
+- name: Install Nexus Nginx virtual host
+  ansible.builtin.template:
+    src: nexus.conf.j2
+    dest: /etc/nginx/sites-available/nexus.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload nginx
+
+- name: Enable Nexus Nginx virtual host
+  ansible.builtin.file:
+    src: /etc/nginx/sites-available/nexus.conf
+    dest: /etc/nginx/sites-enabled/nexus.conf
+    state: link
+  notify: Reload nginx
+
+- name: Disable default Nginx virtual host
+  ansible.builtin.file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+  notify: Reload nginx
+
+- name: Ensure Nginx service is enabled and started
+  ansible.builtin.systemd_service:
+    name: nginx
+    enabled: true
+    state: started

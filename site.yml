@@ -9,4 +9,5 @@
     - role: java
     - role: nexus_install
     - role: nexus_systemd
+    - role: nexus_nginx
     - role: nexus_config

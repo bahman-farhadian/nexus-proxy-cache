@@ -4,7 +4,7 @@
 
 1. Configure inventory:
 ```bash
-vi inventories/dev/hosts.ini
+nano inventories/host.yml
 ```
 
 2. Create local tooling virtualenv:
@@ -17,31 +17,39 @@ source .venv/bin/activate
 
 4. Set and encrypt vault secrets:
 ```bash
-vi group_vars/all/vault.yml
+nano group_vars/all/vault.yml
 ansible-vault encrypt group_vars/all/vault.yml
 ```
 
 5. Validate:
 ```bash
 make lint
-ansible-playbook -i inventories/dev/hosts.ini site.yml --syntax-check
+ansible-playbook -i inventories/host.yml site.yml --syntax-check
 ```
 
 6. Deploy:
 ```bash
-ansible-playbook -i inventories/dev/hosts.ini site.yml --ask-vault-pass
+ansible-playbook -i inventories/host.yml site.yml --ask-vault-pass
 ```
+
+7. Verify API and service:
+```bash
+sudo systemctl status nexus --no-pager
+sudo systemctl status nginx --no-pager
+curl -sf http://repo.idops.local/service/rest/v1/status | jq
+```
+Replace URL if you changed `nexus_hostname` or `nexus_public_port`.
 
 ## Day-2 operations
 
 ### Restart Nexus
 ```bash
-ansible nexus -i inventories/dev/hosts.ini -b -m ansible.builtin.systemd_service -a "name=nexus state=restarted"
+ansible nexus -i inventories/host.yml -b -m ansible.builtin.systemd_service -a "name=nexus state=restarted"
 ```
 
 ### Check Nexus service
 ```bash
-ansible nexus -i inventories/dev/hosts.ini -b -m ansible.builtin.systemd_service -a "name=nexus state=started"
+ansible nexus -i inventories/host.yml -b -m ansible.builtin.systemd_service -a "name=nexus state=started"
 ```
 
 ### View logs on target
@@ -56,7 +64,7 @@ sudo tail -n 200 /var/lib/nexus/log/nexus.log
 2. Optionally set `nexus_download_checksum`.
 3. Run deploy again:
 ```bash
-ansible-playbook -i inventories/dev/hosts.ini site.yml --ask-vault-pass
+ansible-playbook -i inventories/host.yml site.yml --ask-vault-pass
 ```
 
 The role extracts the new version, repoints `/opt/nexus/current`, and restarts service if needed.

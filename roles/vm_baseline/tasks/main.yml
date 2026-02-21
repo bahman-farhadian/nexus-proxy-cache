@@ -23,3 +23,16 @@
     name: nftables
     enabled: true
     state: started
+
+- name: Check if iptables-persistent rules file exists
+  ansible.builtin.stat:
+    path: /etc/iptables/rules.v4
+  register: vm_baseline_iptables_rules_v4
+
+- name: Ensure iptables INPUT rule exists for Nexus public HTTP port
+  ansible.builtin.lineinfile:
+    path: /etc/iptables/rules.v4
+    regexp: "^-A INPUT -p tcp -m tcp --dport {{ nexus_public_port }} -j ACCEPT$"
+    line: "-A INPUT -p tcp -m tcp --dport {{ nexus_public_port }} -j ACCEPT"
+    insertbefore: "^COMMIT$"
+  when: vm_baseline_iptables_rules_v4.stat.exists

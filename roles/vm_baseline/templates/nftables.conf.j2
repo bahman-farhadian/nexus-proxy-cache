@@ -1,7 +1,8 @@
 #!/usr/sbin/nft -f
 flush ruleset
 
-{% set allowed_ports = ([22, nexus_http_port] + vm_baseline_extra_tcp_ports) | unique | sort %}
+{% set ssh_port = (ansible_port | default(22) | int) %}
+{% set allowed_ports = ([ssh_port, nexus_public_port] + vm_baseline_extra_tcp_ports) | unique | sort %}
 table inet filter {
   chain input {
     type filter hook input priority 0; policy drop;

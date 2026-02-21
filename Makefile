@@ -1,6 +1,6 @@
 .PHONY: venv lint check deploy
 
-INVENTORY ?= inventories/dev/hosts.ini
+INVENTORY ?= inventories/host.yml
 PLAYBOOK ?= site.yml
 VENV ?= .venv
 PYTHON ?= python3
