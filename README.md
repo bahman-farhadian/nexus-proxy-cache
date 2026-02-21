@@ -2,10 +2,10 @@
 
 Ansible project to provision a Debian 13 VM and deploy **Sonatype Nexus Repository OSS (Nexus 3)** as a private caching proxy for:
 
-- Debian APT upstreams
-- Docker Hub pulls
+- Debian APT repositories
+- Docker Hub image pulls
 
-This project uses a **native Nexus installation managed by systemd** (no Docker, no docker-compose) and keeps Nexus on plain HTTP for private-network use behind NAT.
+This project uses a **native Nexus installation managed by systemd** (no Docker, no docker-compose) and plain HTTP on a private network.
 
 ## Repository Layout
 
@@ -35,70 +35,149 @@ This project uses a **native Nexus installation managed by systemd** (no Docker,
   - `download.sonatype.com`
   - Debian mirrors
   - Docker Hub (`registry-1.docker.io`)
-- Hostname resolution for `nexus_hostname` (default `repo.idops.local`) from clients and from the Nexus VM itself.
+- Hostname resolution for `nexus_hostname` (default `repo.idops.local`) from:
+  - the Nexus VM itself
+  - client VMs that will use the cache
 
-## Vault Secret Setup
+## Quick Start (End-to-End)
 
-Initialize tooling first:
-
-```bash
-make venv
-```
-
-1. Edit vault placeholder:
-
-```bash
-vi group_vars/all/vault.yml
-```
-
-2. Set a strong value for `vault_nexus_admin_password`.
-
-3. Encrypt the file:
-
-```bash
-./.venv/bin/ansible-vault encrypt group_vars/all/vault.yml
-```
-
-## How To Run
+1. Create local tooling virtualenv:
 
 ```bash
 make venv
+source .venv/bin/activate
 ```
+
+2. Update inventory target:
 
 ```bash
-make lint
+vi inventories/dev/hosts.ini
 ```
+
+Set your VM host/IP and SSH user.
+
+3. Confirm/edit core vars (especially hostname/port if needed):
 
 ```bash
-./.venv/bin/ansible-playbook -i inventories/dev/hosts.ini site.yml --syntax-check
+vi group_vars/all.yml
 ```
 
-```bash
-./.venv/bin/ansible-playbook -i inventories/dev/hosts.ini site.yml --ask-vault-pass
-```
+Important vars:
+- `nexus_hostname`
+- `nexus_http_port`
+- `nexus_version`
 
-You can also use:
+4. Make sure `nexus_hostname` resolves on the Nexus VM and on client VMs.
 
-```bash
-make check
-make deploy
-```
-
-## VM Migration Guide: Use Nexus Instead of Official Repositories
-
-Use this after deployment so clients pull through Nexus cache.
-Default hostname from this project: `repo.idops.local`.
-If needed, add a hosts entry on clients (and on Nexus VM for Ansible API tasks):
+If you are not using DNS, add hosts entries:
 
 ```bash
 echo "<NEXUS_VM_PRIVATE_IP> repo.idops.local" | sudo tee -a /etc/hosts
 ```
 
-### 1) Point Debian APT to Nexus
+5. Set vault secret placeholder and encrypt:
 
-On each Debian client VM, replace official Debian sources with Nexus sources.
+```bash
+vi group_vars/all/vault.yml
+ansible-vault encrypt group_vars/all/vault.yml
+```
 
-If APT group creation is available in your Nexus build:
+6. Validate and deploy:
+
+```bash
+make lint
+make check
+make deploy
+```
+
+Equivalent explicit commands:
+
+```bash
+ansible-playbook -i inventories/dev/hosts.ini site.yml --syntax-check
+ansible-playbook -i inventories/dev/hosts.ini site.yml --ask-vault-pass
+```
+
+Use a different inventory (example: prod):
+
+```bash
+make check INVENTORY=inventories/prod/hosts.ini
+make deploy INVENTORY=inventories/prod/hosts.ini
+```
+
+## Ansible Vault Quick Help
+
+Use Vault to keep `vault_nexus_admin_password` encrypted in `group_vars/all/vault.yml`.
+
+Create/update the secret and encrypt:
+
+```bash
+vi group_vars/all/vault.yml
+ansible-vault encrypt group_vars/all/vault.yml
+```
+
+Edit the encrypted file later (recommended):
+
+```bash
+ansible-vault edit group_vars/all/vault.yml
+```
+
+View encrypted content temporarily:
+
+```bash
+ansible-vault view group_vars/all/vault.yml
+```
+
+Decrypt back to plaintext (only if needed):
+
+```bash
+ansible-vault decrypt group_vars/all/vault.yml
+```
+
+Run playbook and provide vault password interactively:
+
+```bash
+ansible-playbook -i inventories/dev/hosts.ini site.yml --ask-vault-pass
+```
+
+Optional non-interactive method (CI/local automation):
+
+```bash
+ansible-playbook -i inventories/dev/hosts.ini site.yml --vault-password-file .vault_pass.txt
+```
+
+Do not commit `.vault_pass.txt` (or any vault password file) to git.
+When finished, leave the virtualenv with `deactivate`.
+
+## What This Deploys
+
+- Baseline VM packages + restrictive `nftables` firewall (22 + Nexus HTTP port)
+- Java runtime (`openjdk-17-jre-headless` by default)
+- Native Nexus OSS under `/opt/nexus/current`
+- Nexus data directory under `/var/lib/nexus`
+- `systemd` service: `nexus.service`
+- Nexus bootstrap via REST API:
+  - admin password set from vault
+  - APT proxy repositories (+ optional APT group)
+  - Docker Hub proxy repository (+ optional Docker group)
+
+## Post-Deploy Verification
+
+On the Nexus VM:
+
+```bash
+sudo systemctl status nexus --no-pager
+curl -sf http://repo.idops.local:8081/service/rest/v1/status | jq
+```
+
+If you changed hostname or port, replace `repo.idops.local:8081` accordingly.
+
+## VM Migration Guide: Replace Official Repositories With Nexus
+
+Use this on client VMs after Nexus deployment.
+
+### Debian APT clients
+
+If APT group exists:
 
 ```bash
 sudo tee /etc/apt/sources.list.d/nexus.list >/dev/null <<'EOL'
@@ -107,7 +186,7 @@ deb http://<NEXUS_HOSTNAME>:8081/repository/debian-apt-group trixie-security mai
 EOL
 ```
 
-If APT group is not available, use the individual proxies:
+If APT group is not available, use per-upstream proxies:
 
 ```bash
 sudo tee /etc/apt/sources.list.d/nexus.list >/dev/null <<'EOL'
@@ -116,22 +195,17 @@ deb http://<NEXUS_HOSTNAME>:8081/repository/debian-security-proxy trixie-securit
 EOL
 ```
 
-Disable old Debian source files (paths may differ by image):
+Disable old source files and refresh:
 
 ```bash
 sudo rm -f /etc/apt/sources.list
 sudo rm -f /etc/apt/sources.list.d/debian.sources
-```
-
-Then refresh:
-
-```bash
 sudo apt-get update
 ```
 
-### 2) Point Docker to Nexus (Docker Hub cache)
+### Docker clients
 
-Create or update `/etc/docker/daemon.json` on each Docker client VM:
+Configure `/etc/docker/daemon.json`:
 
 ```json
 {
@@ -140,23 +214,28 @@ Create or update `/etc/docker/daemon.json` on each Docker client VM:
 }
 ```
 
-If `enable_docker_group` is `false`, use `docker-hub-proxy` instead of `docker-group`.
+If `enable_docker_group` is `false`, use:
 
-Restart Docker:
+```json
+"registry-mirrors": ["http://<NEXUS_HOSTNAME>:8081/repository/docker-hub-proxy"]
+```
+
+Apply and test:
 
 ```bash
 sudo systemctl restart docker
-```
-
-Test pulls:
-
-```bash
 docker pull alpine:latest
 docker pull nginx:latest
 ```
 
+## Additional Docs
+
+- Detailed client instructions: `docs/client-setup.md`
+- Operational runbook: `docs/runbook.md`
+- Design decisions: `docs/decisions.md`
+
 ## Notes
 
-- No TLS is configured by design for this private deployment.
-- Keep Nexus reachable only on private network segments.
-- APT group support may differ by Nexus build; this project handles unsupported APT group endpoint gracefully by default.
+- TLS/SSL is intentionally not configured (private-network deployment).
+- Keep Nexus restricted to private network paths.
+- APT group endpoint support can vary by Nexus build; this project handles unsupported APT group endpoint by default.

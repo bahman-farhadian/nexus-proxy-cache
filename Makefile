@@ -5,8 +5,7 @@ PLAYBOOK ?= site.yml
 VENV ?= .venv
 PYTHON ?= python3
 PIP := $(VENV)/bin/pip
-ANSIBLE_PLAYBOOK := $(VENV)/bin/ansible-playbook
-ANSIBLE_LINT := $(VENV)/bin/ansible-lint
+VENV_ACTIVATE := . $(VENV)/bin/activate
 
 $(VENV)/bin/activate: requirements.txt
 	$(PYTHON) -m venv $(VENV)
@@ -16,10 +15,10 @@ $(VENV)/bin/activate: requirements.txt
 venv: $(VENV)/bin/activate
 
 lint: venv
-	$(ANSIBLE_LINT) $(PLAYBOOK)
+	$(VENV_ACTIVATE) && ansible-lint $(PLAYBOOK)
 
 check: venv
-	$(ANSIBLE_PLAYBOOK) -i $(INVENTORY) $(PLAYBOOK) --syntax-check
+	$(VENV_ACTIVATE) && ansible-playbook -i $(INVENTORY) $(PLAYBOOK) --syntax-check
 
 deploy: venv
-	$(ANSIBLE_PLAYBOOK) -i $(INVENTORY) $(PLAYBOOK) --ask-vault-pass
+	$(VENV_ACTIVATE) && ansible-playbook -i $(INVENTORY) $(PLAYBOOK) --ask-vault-pass
