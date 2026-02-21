@@ -1,2 +1,2 @@
 ---
-java_runtime_package: openjdk-17-jre-headless
+java_runtime_package: openjdk-21-jre-headless

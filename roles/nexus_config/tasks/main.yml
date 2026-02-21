@@ -19,6 +19,15 @@
   until: nexus_status.status in [200, 401]
   changed_when: false
 
+- name: Fail when Nexus admin password is not configured
+  ansible.builtin.fail:
+    msg: >-
+      Nexus admin password is not set. Create .nexus_admin_password on the control host,
+      store only the password text in it, and ensure nexus_admin_password_file points to it.
+  when:
+    - (nexus_admin_password | default('')) | length == 0
+      or nexus_admin_password == "CHANGE_ME_WITH_STRONG_PASSWORD"
+
 - name: Check if desired admin password already works
   ansible.builtin.uri:
     url: "{{ nexus_rest_api_base_url }}/status"
@@ -54,13 +63,13 @@
 - name: Fail when no valid admin password source is available
   ansible.builtin.fail:
     msg: >-
-      Unable to authenticate with vault_nexus_admin_password and bootstrap password file was not found.
-      Set vault_nexus_admin_password to the current admin password or reset admin credentials manually.
+      Unable to authenticate with nexus_admin_password and bootstrap password file was not found.
+      Set nexus_admin_password to the current admin password or reset admin credentials manually.
   when:
     - nexus_desired_password_check.status == 401
     - (nexus_bootstrap_admin_password | default('')) | length == 0
 
-- name: Set Nexus admin password from vault
+- name: Set Nexus admin password from desired value
   ansible.builtin.uri:
     url: "{{ nexus_rest_api_base_url }}/security/users/admin/change-password"
     method: PUT
@@ -75,7 +84,7 @@
   no_log: true
   when: nexus_desired_password_check.status == 401
 
-- name: Verify admin authentication with vault password
+- name: Verify admin authentication with desired password
   ansible.builtin.uri:
     url: "{{ nexus_rest_api_base_url }}/status"
     method: GET

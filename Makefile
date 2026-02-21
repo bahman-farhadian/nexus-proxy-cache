@@ -1,4 +1,4 @@
-.PHONY: venv lint check deploy
+.PHONY: venv lint check ping deploy
 
 INVENTORY ?= inventories/host.yml
 PLAYBOOK ?= site.yml
@@ -20,5 +20,8 @@ lint: venv
 check: venv
 	$(VENV_ACTIVATE) && ansible-playbook -i $(INVENTORY) $(PLAYBOOK) --syntax-check
 
+ping: venv
+	$(VENV_ACTIVATE) && ansible nexus -i $(INVENTORY) -m ansible.builtin.ping
+
 deploy: venv
-	$(VENV_ACTIVATE) && ansible-playbook -i $(INVENTORY) $(PLAYBOOK) --ask-vault-pass
+	$(VENV_ACTIVATE) && ansible-playbook -i $(INVENTORY) $(PLAYBOOK)

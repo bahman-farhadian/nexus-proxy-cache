@@ -1,6 +1,6 @@
 ---
 # Core Nexus settings
-nexus_version: "3.84.1-01"
+nexus_version: "3.89.1-02"
 # Canonical Nexus hostname clients should use (DNS or /etc/hosts managed outside this project).
 nexus_hostname: repo.idops.local
 # Internal Nexus application port (Nexus JVM service listens here).
@@ -26,7 +26,10 @@ nexus_download_checksum: ""
 
 # API/auth settings
 nexus_admin_username: admin
-nexus_admin_password: "{{ vault_nexus_admin_password }}"
+# Local password file on the Ansible control host (gitignored).
+nexus_admin_password_file: "{{ playbook_dir }}/.nexus_admin_password"
+# Loaded at runtime from nexus_admin_password_file.
+nexus_admin_password: "{{ lookup('ansible.builtin.file', nexus_admin_password_file, errors='ignore') | trim }}"
 nexus_wait_timeout: 900
 
 # Repository defaults

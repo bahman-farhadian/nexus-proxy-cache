@@ -23,7 +23,6 @@ This project uses a **native Nexus installation managed by systemd** (no Docker,
 - `site.yml`
 - `inventories/host.yml`
 - `group_vars/all.yml`
-- `group_vars/all/vault.yml`
 - `roles/vm_baseline/`
 - `roles/java/`
 - `roles/nexus_install/`
@@ -34,6 +33,7 @@ This project uses a **native Nexus installation managed by systemd** (no Docker,
 - `docs/client-setup.md`
 - `docs/runbook.md`
 - `requirements.txt`
+- `.nexus_admin_password.example`
 - `.gitignore`
 - `Makefile`
 
@@ -93,18 +93,22 @@ If you are not using DNS, add hosts entries:
 echo "<NEXUS_VM_PRIVATE_IP> repo.idops.local" | sudo tee -a /etc/hosts
 ```
 
-5. Set vault secret placeholder and encrypt:
+5. Create local Nexus admin password file (ignored by git):
 
 ```bash
-nano group_vars/all/vault.yml
-ansible-vault encrypt group_vars/all/vault.yml
+cp .nexus_admin_password.example .nexus_admin_password
+nano .nexus_admin_password
+chmod 600 .nexus_admin_password
 ```
+
+The file must contain only the password text on one line.
 
 6. Validate and deploy:
 
 ```bash
 make lint
 make check
+make ping
 make deploy
 ```
 
@@ -112,66 +116,31 @@ Equivalent explicit commands:
 
 ```bash
 ansible-playbook -i inventories/host.yml site.yml --syntax-check
-ansible-playbook -i inventories/host.yml site.yml --ask-vault-pass
+ansible nexus -i inventories/host.yml -m ansible.builtin.ping
+ansible-playbook -i inventories/host.yml site.yml
 ```
 
-## Ansible Vault Quick Help
+## Admin Password File Notes
 
-Use Vault to keep `vault_nexus_admin_password` encrypted in `group_vars/all/vault.yml`.
-
-Create/update the secret and encrypt:
-
-```bash
-nano group_vars/all/vault.yml
-ansible-vault encrypt group_vars/all/vault.yml
-```
-
-Edit the encrypted file later (recommended):
-
-```bash
-ansible-vault edit group_vars/all/vault.yml
-```
-
-View encrypted content temporarily:
-
-```bash
-ansible-vault view group_vars/all/vault.yml
-```
-
-Decrypt back to plaintext (only if needed):
-
-```bash
-ansible-vault decrypt group_vars/all/vault.yml
-```
-
-Run playbook and provide vault password interactively:
-
-```bash
-ansible-playbook -i inventories/host.yml site.yml --ask-vault-pass
-```
-
-Optional non-interactive method (CI/local automation):
-
-```bash
-ansible-playbook -i inventories/host.yml site.yml --vault-password-file .vault_pass.txt
-```
-
-Do not commit `.vault_pass.txt` (or any vault password file) to git.
-When finished, leave the virtualenv with `deactivate`.
+- Vault is deprecated in this project.
+- Admin password is read from `nexus_admin_password_file` (default: `{{ playbook_dir }}/.nexus_admin_password`).
+- `.nexus_admin_password` is gitignored and must stay local on your control host.
+- If you already changed the Nexus admin password manually, set `.nexus_admin_password` to that exact value before rerunning playbooks.
 
 ## What This Deploys
 
 - Baseline VM packages + restrictive `nftables` firewall (SSH port from `ansible_port` + Nexus public HTTP port)
 - Optional iptables compatibility rule: if `/etc/iptables/rules.v4` exists, ensure ACCEPT for Nexus public port
-- Java runtime (`openjdk-17-jre-headless` by default)
+- Java runtime (`openjdk-21-jre-headless` by default)
 - Native Nexus OSS under `/opt/nexus/current` (bound to loopback on internal port)
 - Nexus data directory under `/var/lib/nexus`
 - `systemd` service: `nexus.service`
 - Nginx reverse proxy on `nexus_public_port` with `server_name nexus_hostname`
 - Nexus bootstrap via REST API:
-  - admin password set from vault
+  - admin password set to value in `.nexus_admin_password`
   - APT proxy repositories (+ optional APT group)
   - Docker Hub proxy repository (+ optional Docker group)
+- Default Nexus package version pinned in this repo: `3.89.1-02`
 
 ## First Nexus Login (After Deploy)
 
@@ -181,7 +150,7 @@ http://<nexus_hostname>
 ```
 If `nexus_public_port` is not `80`, use `http://<nexus_hostname>:<nexus_public_port>`.
 2. Login username: `admin`
-3. Login password: value of `vault_nexus_admin_password` from your encrypted `group_vars/all/vault.yml`.
+3. Login password: value from `.nexus_admin_password`
 4. In Nexus UI, check repository names under **Repositories**:
    - `debian-main-proxy`
    - `debian-security-proxy`

@@ -15,24 +15,27 @@ source .venv/bin/activate
 
 3. Ensure `nexus_hostname` is resolvable from clients and Nexus VM (DNS or `/etc/hosts`).
 
-4. Set and encrypt vault secrets:
+4. Create local admin password file:
 ```bash
-nano group_vars/all/vault.yml
-ansible-vault encrypt group_vars/all/vault.yml
+cp .nexus_admin_password.example .nexus_admin_password
+nano .nexus_admin_password
+chmod 600 .nexus_admin_password
 ```
+Keep a single password line in this file.
 
 5. Validate:
 ```bash
 make lint
 ansible-playbook -i inventories/host.yml site.yml --syntax-check
+ansible nexus -i inventories/host.yml -m ansible.builtin.ping
 ```
 
 6. Deploy:
 ```bash
-ansible-playbook -i inventories/host.yml site.yml --ask-vault-pass
+ansible-playbook -i inventories/host.yml site.yml
 ```
 
-7. Verify API and service:
+7. Verify API and services:
 ```bash
 sudo systemctl status nexus --no-pager
 sudo systemctl status nginx --no-pager
@@ -64,7 +67,7 @@ sudo tail -n 200 /var/lib/nexus/log/nexus.log
 2. Optionally set `nexus_download_checksum`.
 3. Run deploy again:
 ```bash
-ansible-playbook -i inventories/host.yml site.yml --ask-vault-pass
+ansible-playbook -i inventories/host.yml site.yml
 ```
 
 The role extracts the new version, repoints `/opt/nexus/current`, and restarts service if needed.
@@ -77,5 +80,5 @@ The role extracts the new version, repoints `/opt/nexus/current`, and restarts s
 
 ## Failure scenarios
 
-- If admin password task fails and `admin.password` is missing, set `vault_nexus_admin_password` to current known admin password.
+- If admin password tasks fail and `/var/lib/nexus/admin.password` is missing, update `.nexus_admin_password` with the current known admin password.
 - If APT group endpoint is unavailable, use per-upstream APT proxies on clients.

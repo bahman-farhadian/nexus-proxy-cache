@@ -11,7 +11,7 @@
 - Compatibility: If `/etc/iptables/rules.v4` exists, ensure an ACCEPT rule is present for `nexus_public_port`.
 
 ## 3. Java runtime source
-- Decision: Install Java runtime from Debian packages (`openjdk-17-jre-headless` by default).
+- Decision: Install Java runtime from Debian packages (`openjdk-21-jre-headless` by default).
 - Why: Keeps JRE maintenance in OS package management.
 
 ## 4. Nexus configuration via REST API
@@ -31,8 +31,8 @@
 - Why: Nexus runs as non-root service while clients still get a standard HTTP endpoint (`http://repo.idops.local`).
 
 ## 8. Secrets handling
-- Decision: Keep admin password in `group_vars/all/vault.yml` only.
-- Why: No plaintext secrets in repo and compatible with standard Ansible Vault workflows.
+- Decision: Deprecate Ansible Vault for this project and load the Nexus admin password from local file `.nexus_admin_password` on the control host.
+- Why: Reduces onboarding friction and keeps the workflow straightforward for operators.
 
 ## 9. Stable Nexus hostname
 - Decision: Use `nexus_hostname` (default `repo.idops.local`) as the canonical endpoint for Nexus URLs.
@@ -41,3 +41,7 @@
 ## 10. Python tooling isolation
 - Decision: Use project-local `.venv` with `requirements.txt` via `make venv`.
 - Why: Keeps Ansible and lint versions isolated from host OS packages and avoids global dependency drift.
+
+## 11. Nexus version tracking
+- Decision: Track latest stable GA Nexus OSS release from Sonatype official release status/download pages.
+- Why: Sonatype publishes GA/maintenance status but no LTSC channel; pinning the latest GA keeps security and compatibility current.
