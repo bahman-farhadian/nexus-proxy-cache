@@ -313,11 +313,22 @@
     - nexus_manage_custom_encryption_key | bool
     - nexus_default_secret_key_warning_present | bool
 
-- name: Detect default secret key warning after re-encryption attempt
+- name: Build status-check content after re-encryption attempt
   ansible.builtin.set_fact:
     nexus_status_checks_after_reencrypt_content: >-
-      {{ nexus_status_checks_after_reencrypt.content
-         | default(nexus_status_checks.content | default('')) }}
+      {{
+        nexus_status_checks_after_reencrypt.content
+        if (
+          nexus_status_checks_after_reencrypt is defined
+          and nexus_status_checks_after_reencrypt.content is defined
+        )
+        else (nexus_status_checks.content | default(''))
+      }}
+  changed_when: false
+  when: nexus_manage_custom_encryption_key | bool
+
+- name: Detect default secret key warning after re-encryption attempt
+  ansible.builtin.set_fact:
     nexus_default_secret_key_warning_after_reencrypt_present: >-
       {{ "Default key in use, secrets are not encrypted!"
          in nexus_status_checks_after_reencrypt_content
