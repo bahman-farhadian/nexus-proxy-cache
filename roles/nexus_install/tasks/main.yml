@@ -122,6 +122,19 @@
     mode: "0644"
   register: nexus_rc_file
 
+- name: Ensure Nexus configuration parent directories exist before templating
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ nexus_user }}"
+    group: "{{ nexus_group }}"
+    mode: "0750"
+  loop:
+    - "{{ nexus_data_dir }}/etc"
+    - "{{ nexus_data_dir }}/etc/fabric"
+    - "{{ nexus_install_dir }}/sonatype-work/nexus3/etc"
+    - "{{ nexus_install_dir }}/sonatype-work/nexus3/etc/fabric"
+
 - name: Configure nexus.properties in all Nexus config paths
   ansible.builtin.template:
     src: nexus.properties.j2
