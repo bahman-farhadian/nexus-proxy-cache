@@ -1,4 +1,13 @@
 ---
+- name: Ensure Nexus launcher work directory exists and is writable
+  ansible.builtin.file:
+    path: "{{ nexus_install_dir }}/sonatype-work/nexus3"
+    state: directory
+    owner: "{{ nexus_user }}"
+    group: "{{ nexus_group }}"
+    mode: "0750"
+    follow: true
+
 - name: Install systemd unit for Nexus
   ansible.builtin.template:
     src: nexus.service.j2
