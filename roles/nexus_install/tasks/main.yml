@@ -99,6 +99,48 @@
     checksum: "{{ nexus_download_checksum if (nexus_download_checksum | length > 0) else omit }}"
     force: false
 
+- name: Check downloaded Nexus archive readability
+  ansible.builtin.command:
+    argv:
+      - tar
+      - -tzf
+      - "/tmp/{{ nexus_archive_name }}"
+  register: nexus_archive_readability_check
+  changed_when: false
+  failed_when: false
+
+- name: Remove corrupted Nexus archive to force clean re-download
+  ansible.builtin.file:
+    path: "/tmp/{{ nexus_archive_name }}"
+    state: absent
+  when: nexus_archive_readability_check.rc != 0
+
+- name: Re-download Nexus OSS archive after corruption cleanup
+  ansible.builtin.get_url:
+    url: "{{ nexus_download_url }}"
+    dest: "/tmp/{{ nexus_archive_name }}"
+    mode: "0644"
+    checksum: "{{ nexus_download_checksum if (nexus_download_checksum | length > 0) else omit }}"
+    force: false
+  when: nexus_archive_readability_check.rc != 0
+
+- name: Validate Nexus archive before extraction
+  ansible.builtin.command:
+    argv:
+      - tar
+      - -tzf
+      - "/tmp/{{ nexus_archive_name }}"
+  register: nexus_archive_readability_final_check
+  changed_when: false
+  failed_when: false
+
+- name: Fail when Nexus archive is still invalid after cleanup and re-download
+  ansible.builtin.fail:
+    msg: >-
+      Nexus archive at /tmp/{{ nexus_archive_name }} is invalid after re-download.
+      Verify outbound access to {{ nexus_download_url }} and any HTTP proxy/content filter in front of the VM.
+  when: nexus_archive_readability_final_check.rc != 0
+
 - name: Extract Nexus OSS archive
   ansible.builtin.unarchive:
     src: "/tmp/{{ nexus_archive_name }}"
