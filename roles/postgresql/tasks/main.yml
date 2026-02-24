@@ -70,6 +70,50 @@
     - nexus_postgresql_local_enabled | bool
     - (nexus_postgresql_role_exists.stdout | default("") | trim) != "1"
 
+- name: Check Nexus PostgreSQL role authentication with configured password
+  ansible.builtin.command:
+    argv:
+      - psql
+      - -h
+      - "{{ nexus_postgresql_host }}"
+      - -p
+      - "{{ nexus_postgresql_port | string }}"
+      - -U
+      - "{{ nexus_postgresql_user }}"
+      - -d
+      - postgres
+      - -tAc
+      - "SELECT 1;"
+  environment:
+    PGPASSWORD: "{{ nexus_postgresql_password }}"
+  register: nexus_postgresql_password_auth_check
+  changed_when: false
+  failed_when: false
+  no_log: true
+  when:
+    - nexus_database_backend == "postgresql"
+    - nexus_postgresql_local_enabled | bool
+
+- name: Update PostgreSQL role password for Nexus when authentication fails
+  ansible.builtin.command:
+    argv:
+      - psql
+      - -v
+      - ON_ERROR_STOP=1
+      - -c
+      - >-
+        ALTER ROLE "{{ nexus_postgresql_user }}"
+        LOGIN PASSWORD '{{ nexus_postgresql_password | replace("'", "''") }}';
+  become: true
+  become_user: postgres
+  no_log: true
+  changed_when: true
+  when:
+    - nexus_database_backend == "postgresql"
+    - nexus_postgresql_local_enabled | bool
+    - (nexus_postgresql_role_exists.stdout | default("") | trim) == "1"
+    - nexus_postgresql_password_auth_check.rc != 0
+
 - name: Check PostgreSQL database exists
   ansible.builtin.command:
     argv:

@@ -8,6 +8,25 @@
     mode: "0750"
     follow: true
 
+- name: Ensure Nexus data directory ownership is correct recursively
+  ansible.builtin.file:
+    path: "{{ nexus_data_dir }}"
+    state: directory
+    owner: "{{ nexus_user }}"
+    group: "{{ nexus_group }}"
+    mode: "0750"
+    recurse: true
+
+- name: Ensure Nexus legacy work directory ownership is correct recursively
+  ansible.builtin.file:
+    path: "{{ nexus_install_dir }}/sonatype-work/nexus3"
+    state: directory
+    owner: "{{ nexus_user }}"
+    group: "{{ nexus_group }}"
+    mode: "0750"
+    recurse: true
+    follow: true
+
 - name: Install systemd unit for Nexus
   ansible.builtin.template:
     src: nexus.service.j2

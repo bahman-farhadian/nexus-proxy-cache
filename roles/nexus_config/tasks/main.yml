@@ -1,23 +1,67 @@
 ---
-- name: Wait for Nexus TCP port to be reachable
-  ansible.builtin.wait_for:
-    host: 127.0.0.1
-    port: "{{ nexus_http_port | int }}"
-    timeout: "{{ nexus_wait_timeout | int }}"
-    delay: 5
+- name: Wait for Nexus startup and API readiness
+  block:
+    - name: Wait for Nexus TCP port to be reachable
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: "{{ nexus_http_port | int }}"
+        timeout: "{{ nexus_wait_timeout | int }}"
+        delay: 5
 
-- name: Wait for Nexus REST API readiness
-  ansible.builtin.uri:
-    url: "{{ nexus_rest_api_config_base_url }}/status"
-    method: GET
-    status_code:
-      - 200
-      - 401
-  register: nexus_status
-  retries: 120
-  delay: 5
-  until: nexus_status.status in [200, 401]
-  changed_when: false
+    - name: Wait for Nexus REST API readiness
+      ansible.builtin.uri:
+        url: "{{ nexus_rest_api_config_base_url }}/status"
+        method: GET
+        status_code:
+          - 200
+          - 401
+      register: nexus_status
+      retries: 120
+      delay: 5
+      until: nexus_status.status in [200, 401]
+      changed_when: false
+  rescue:
+    - name: Capture Nexus systemd status on startup failure
+      ansible.builtin.command: systemctl --no-pager --full status nexus.service
+      register: nexus_startup_service_status
+      changed_when: false
+      failed_when: false
+
+    - name: Capture Nexus journal entries on startup failure
+      ansible.builtin.command: journalctl -u nexus.service -n 120 --no-pager
+      register: nexus_startup_journal
+      changed_when: false
+      failed_when: false
+
+    - name: Capture Nexus application log tail on startup failure
+      ansible.builtin.command: "tail -n 120 {{ nexus_data_dir }}/log/nexus.log"
+      register: nexus_startup_nexus_log
+      changed_when: false
+      failed_when: false
+
+    - name: Capture Nexus Karaf log tail on startup failure
+      ansible.builtin.command: "tail -n 120 {{ nexus_data_dir }}/log/karaf.log"
+      register: nexus_startup_karaf_log
+      changed_when: false
+      failed_when: false
+
+    - name: Fail with Nexus startup diagnostics
+      ansible.builtin.fail:
+        msg: |
+          Nexus did not become ready on {{ nexus_rest_api_config_base_url }}/status.
+          This is not a memory-peak indicator issue; the Java process exited during bootstrap.
+
+          systemctl status nexus.service:
+          {{ nexus_startup_service_status.stdout | default('unavailable') }}
+
+          journalctl -u nexus.service:
+          {{ nexus_startup_journal.stdout | default('unavailable') }}
+
+          {{ nexus_data_dir }}/log/nexus.log:
+          {{ nexus_startup_nexus_log.stdout | default('unavailable') }}
+
+          {{ nexus_data_dir }}/log/karaf.log:
+          {{ nexus_startup_karaf_log.stdout | default('unavailable') }}
 
 - name: Fail when Nexus admin password is not configured
   ansible.builtin.fail:
