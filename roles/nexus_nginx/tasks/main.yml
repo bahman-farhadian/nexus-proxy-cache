@@ -97,6 +97,40 @@
     state: absent
   notify: Restart nginx
 
+- name: Discover enabled Nginx site entries
+  ansible.builtin.find:
+    paths: /etc/nginx/sites-enabled
+    recurse: false
+    file_type: any
+  register: nexus_nginx_sites_enabled_entries
+  changed_when: false
+  failed_when: false
+
+- name: Remove unmanaged enabled Nginx site entries
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ nexus_nginx_sites_enabled_entries.files | default([]) }}"
+  notify: Restart nginx
+
+- name: Discover unmanaged Nginx conf.d files
+  ansible.builtin.find:
+    paths: /etc/nginx/conf.d
+    patterns: "*.conf"
+    recurse: false
+    file_type: any
+  register: nexus_nginx_conf_d_entries
+  changed_when: false
+  failed_when: false
+
+- name: Remove unmanaged Nginx conf.d files
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ nexus_nginx_conf_d_entries.files | default([]) }}"
+  when: item.path != "/etc/nginx/conf.d/00-nexus.conf"
+  notify: Restart nginx
+
 - name: Validate Nginx configuration
   ansible.builtin.command: nginx -t
   changed_when: false
@@ -107,9 +141,8 @@
     enabled: true
     state: started
 
-- name: Apply pending Nginx changes before certificate issuance
+- name: Apply pending Nginx changes immediately
   ansible.builtin.meta: flush_handlers
-  when: nexus_tls_enabled | bool
 
 - name: Request Let's Encrypt certificate
   ansible.builtin.command: >-
@@ -156,3 +189,9 @@
     enabled: true
     state: started
   when: nexus_tls_enabled | bool
+
+- name: Reload Nginx to apply current configuration
+  ansible.builtin.systemd_service:
+    name: nginx
+    state: restarted
+  changed_when: false

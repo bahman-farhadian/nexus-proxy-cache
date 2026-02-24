@@ -58,6 +58,16 @@
     force: false
   when: not nexus_legacy_work_path.stat.exists
 
+- name: Re-point legacy Nexus work symlink when target differs
+  ansible.builtin.file:
+    src: "{{ nexus_data_dir }}"
+    dest: "{{ nexus_install_dir }}/sonatype-work/nexus3"
+    state: link
+    force: true
+  when:
+    - nexus_legacy_work_path.stat.islnk | default(false)
+    - (nexus_legacy_work_path.stat.lnk_source | default('')) != nexus_data_dir
+
 - name: Ensure ownership on existing legacy Nexus work directory
   ansible.builtin.file:
     path: "{{ nexus_install_dir }}/sonatype-work/nexus3"
