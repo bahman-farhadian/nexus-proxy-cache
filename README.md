@@ -198,7 +198,8 @@ nexus_https_port: 443
 ## What This Deploys
 
 - Baseline VM packages + restrictive `nftables` firewall (SSH port from `ansible_port` + Nexus public HTTP port)
-- Optional iptables compatibility rule: if `/etc/iptables/rules.v4` exists, ensure ACCEPT for Nexus public port
+- Optional iptables compatibility mode: if `/etc/iptables/rules.v4` exists, manage an Ansible block
+  before `-A INPUT -j DROP` for SSH + Nexus ports and restart `netfilter-persistent` when available
 - Java runtime (`openjdk-21-jre-headless` by default)
 - PostgreSQL datastore (local service by default) to avoid H2 scaling-limit warnings
 - Native Nexus OSS under `/opt/nexus/current` (bound to loopback on internal port)

@@ -29,10 +29,76 @@
     path: /etc/iptables/rules.v4
   register: vm_baseline_iptables_rules_v4
 
-- name: Ensure iptables INPUT rule exists for Nexus public HTTP port
-  ansible.builtin.lineinfile:
-    path: /etc/iptables/rules.v4
-    regexp: "^-A INPUT -p tcp -m tcp --dport {{ nexus_public_port }} -j ACCEPT$"
-    line: "-A INPUT -p tcp -m tcp --dport {{ nexus_public_port }} -j ACCEPT"
-    insertbefore: "^COMMIT$"
+- name: Check if iptables INPUT DROP rule exists
+  ansible.builtin.command: grep -q "^-A INPUT -j DROP$" /etc/iptables/rules.v4
+  register: vm_baseline_iptables_input_drop_rule
+  changed_when: false
+  failed_when: false
   when: vm_baseline_iptables_rules_v4.stat.exists
+
+- name: Build iptables compatibility allow-port list
+  ansible.builtin.set_fact:
+    vm_baseline_iptables_allowed_ports: >-
+      {{
+        (
+          [ansible_port | default(22) | int, nexus_public_port | int]
+          + (vm_baseline_extra_tcp_ports | default([]) | map('int') | list)
+        )
+        | unique
+        | sort
+      }}
+  changed_when: false
+  when: vm_baseline_iptables_rules_v4.stat.exists
+
+- name: Ensure iptables compatibility block exists before INPUT DROP
+  ansible.builtin.blockinfile:
+    path: /etc/iptables/rules.v4
+    marker: "# {mark} ANSIBLE NEXUS PORT RULES"
+    block: |
+      {% for port in vm_baseline_iptables_allowed_ports %}
+      -A INPUT -p tcp -m tcp --dport {{ port }} -j ACCEPT
+      {% endfor %}
+    insertbefore: "^-A INPUT -j DROP$"
+  register: vm_baseline_iptables_rules_block_with_drop
+  when:
+    - vm_baseline_iptables_rules_v4.stat.exists
+    - vm_baseline_iptables_input_drop_rule.rc == 0
+
+- name: Ensure iptables compatibility block exists before COMMIT when INPUT DROP is absent
+  ansible.builtin.blockinfile:
+    path: /etc/iptables/rules.v4
+    marker: "# {mark} ANSIBLE NEXUS PORT RULES"
+    block: |
+      {% for port in vm_baseline_iptables_allowed_ports %}
+      -A INPUT -p tcp -m tcp --dport {{ port }} -j ACCEPT
+      {% endfor %}
+    insertbefore: "^COMMIT$"
+  register: vm_baseline_iptables_rules_block_without_drop
+  when:
+    - vm_baseline_iptables_rules_v4.stat.exists
+    - vm_baseline_iptables_input_drop_rule.rc != 0
+
+- name: Gather service facts for iptables-persistent compatibility
+  ansible.builtin.service_facts:
+  when: vm_baseline_iptables_rules_v4.stat.exists
+
+- name: Ensure netfilter-persistent service is enabled and started when present
+  ansible.builtin.systemd_service:
+    name: netfilter-persistent
+    enabled: true
+    state: started
+  when:
+    - vm_baseline_iptables_rules_v4.stat.exists
+    - "'netfilter-persistent.service' in ansible_facts.services"
+
+- name: Restart netfilter-persistent when rules.v4 changed
+  ansible.builtin.systemd_service:
+    name: netfilter-persistent
+    state: restarted
+  when:
+    - vm_baseline_iptables_rules_v4.stat.exists
+    - "'netfilter-persistent.service' in ansible_facts.services"
+    - >-
+      (vm_baseline_iptables_rules_block_with_drop is defined and vm_baseline_iptables_rules_block_with_drop.changed)
+      or
+      (vm_baseline_iptables_rules_block_without_drop is defined and vm_baseline_iptables_rules_block_without_drop.changed)

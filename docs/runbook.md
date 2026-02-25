@@ -100,6 +100,8 @@ The role extracts the new version, repoints `/opt/nexus/current`, and restarts s
 - If TLS mode is enabled, verify renewal automation with `systemctl status certbot.timer`.
 - Let's Encrypt cannot issue certificates for raw IP addresses; use a DNS hostname for `nexus_tls_domain`.
 - If APT group endpoint is unavailable, use per-upstream APT proxies on clients.
+- If access works before reboot but times out after reboot, inspect `/etc/iptables/rules.v4` and ensure
+  Nexus/SSH allow rules are above `-A INPUT -j DROP`; rerun playbook to restore managed compatibility block.
 - If Nexus status still shows `Recommended Limits for H2` while `nexus_database_backend: postgresql`, verify both files exist with the same content:
   - `/var/lib/nexus/etc/fabric/nexus-store.properties`
   - `/opt/nexus/sonatype-work/nexus3/etc/fabric/nexus-store.properties`
