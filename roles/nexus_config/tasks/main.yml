@@ -111,17 +111,6 @@
     - nexus_default_password_check is defined
     - nexus_default_password_check.status == 200
 
-- name: Wait for bootstrap admin password file in Nexus data directory
-  ansible.builtin.wait_for:
-    path: "{{ nexus_data_dir }}/admin.password"
-    state: present
-    timeout: "{{ nexus_bootstrap_password_wait_timeout | int }}"
-  changed_when: false
-  failed_when: false
-  when:
-    - nexus_desired_password_check.status == 401
-    - (nexus_bootstrap_admin_password | default('')) | length == 0
-
 - name: Check bootstrap admin password file in Nexus data directory
   ansible.builtin.stat:
     path: "{{ nexus_data_dir }}/admin.password"
@@ -225,7 +214,10 @@
 - name: Fail when no valid admin password source is available
   ansible.builtin.fail:
     msg: >-
-      Unable to authenticate with nexus_admin_password, fallback password, and bootstrap password file.
+      Unable to authenticate Nexus admin with password from .nexus_admin_password.
+      Desired password status={{ nexus_desired_password_check.status }},
+      fallback status={{ nexus_default_password_check.status | default('n/a') }}.
+      Also could not read a bootstrap password file.
       Checked {{ nexus_data_dir }}/admin.password and {{ nexus_install_dir }}/sonatype-work/nexus3/admin.password.
       Set .nexus_admin_password to the current Nexus admin password, or reset admin credentials manually.
   when:

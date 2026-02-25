@@ -22,8 +22,10 @@ nexus_tls_cert_privkey_path: "/etc/letsencrypt/live/{{ nexus_tls_domain }}/privk
 # Derived base URLs reused across roles/docs where Nexus endpoints are built.
 nexus_external_scheme: "{{ 'https' if (nexus_tls_enabled | bool) else 'http' }}"
 nexus_external_port: "{{ (nexus_https_port if (nexus_tls_enabled | bool) else nexus_public_port) | int }}"
-nexus_base_url: >-
-  {{ nexus_external_scheme }}://{{ nexus_hostname }}{% if (nexus_external_port | int) != (443 if nexus_external_scheme == 'https' else 80) %}:{{ nexus_external_port }}{% endif %}
+nexus_external_default_port: "{{ 443 if nexus_external_scheme == 'https' else 80 }}"
+nexus_external_port_suffix: >-
+  {{ (':' ~ nexus_external_port) if (nexus_external_port | int) != (nexus_external_default_port | int) else '' }}
+nexus_base_url: "{{ nexus_external_scheme }}://{{ nexus_hostname }}{{ nexus_external_port_suffix }}"
 nexus_rest_api_base_url: "{{ nexus_base_url }}/service/rest/v1"
 # Internal control-plane URL used by Ansible on the Nexus host itself.
 # Keeps bootstrap independent from DNS and Nginx routing.
@@ -71,7 +73,6 @@ nexus_admin_password: >-
 # Fallback used when desired password does not authenticate and bootstrap file is missing.
 nexus_admin_default_password_fallback: admin123
 nexus_wait_timeout: 900
-nexus_bootstrap_password_wait_timeout: 300
 
 # Database backend
 # Set to postgresql to avoid H2 scale-limit recommendations in Nexus status checks.
